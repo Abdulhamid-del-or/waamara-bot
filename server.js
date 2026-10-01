@@ -198,6 +198,20 @@ await pool.query(`
   ALTER TABLE attempts
   ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP
 `);
+  await pool.query(`
+  ALTER TABLE attempts
+  ADD COLUMN IF NOT EXISTS student_id BIGINT
+`);
+
+await pool.query(`
+  ALTER TABLE attempts
+  ADD COLUMN IF NOT EXISTS student_name TEXT
+`);
+
+await pool.query(`
+  ALTER TABLE attempts
+  ADD COLUMN IF NOT EXISTS exam_id INTEGER
+`);
   /*
    Existing users table keessatti id default yoo hin jirre
    sequence sirreessa.
