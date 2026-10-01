@@ -18,16 +18,18 @@ if (!DATABASE_URL) {
   process.exit(1);
 }
 
-/* =========================
-   DATABASE
-========================= */
-
 const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: {
     rejectUnauthorized: false
   }
 });
+
+app.use(express.json());
+
+/* =========================
+   DATABASE
+========================= */
 
 async function db(query, params = []) {
   const result = await pool.query(query, params);
@@ -113,23 +115,10 @@ async function initDatabase() {
    EXPRESS
 ========================= */
 
-app.use(express.json());
-
 app.get("/", (req, res) => {
   res.send(`
-    <html>
-      <head>
-        <title>Waamara Bot</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-      </head>
-      <body style="font-family:Arial;text-align:center;padding:40px">
-        <h1>🤖 Waamara Bot</h1>
-        <p>Waamara Telegram Bot is running.</p>
-        <p>📝 Qormaata uumuu</p>
-        <p>📖 Qormaata fudhachuu</p>
-        <p>📊 Qabxii agarsiisuu</p>
-      </body>
-    </html>
+    <h1>🤖 Waamara Bot</h1>
+    <p>Waamara Telegram Bot is running.</p>
   `);
 });
 
@@ -146,14 +135,13 @@ app.get("/health", async (req, res) => {
   } catch (error) {
     res.status(500).json({
       status: "error",
-      database: "disconnected",
-      error: error.message
+      database: "disconnected"
     });
   }
 });
 
 /* =========================
-   TELEGRAM API
+   TELEGRAM
 ========================= */
 
 function telegram(method, data = {}) {
@@ -182,7 +170,11 @@ function telegram(method, data = {}) {
             const parsed = JSON.parse(result);
 
             if (!parsed.ok) {
-              reject(new Error(parsed.description || "Telegram API error"));
+              reject(
+                new Error(
+                  parsed.description || "Telegram error"
+                )
+              );
               return;
             }
 
@@ -195,7 +187,6 @@ function telegram(method, data = {}) {
     );
 
     request.on("error", reject);
-
     request.write(body);
     request.end();
   });
@@ -209,14 +200,34 @@ async function sendMessage(chatId, text, options = {}) {
   });
 }
 
-async function answerCallback(callbackId, text = "") {
+async function answerCallback(id, text = "") {
   try {
     await telegram("answerCallbackQuery", {
-      callback_query_id: callbackId,
+      callback_query_id: id,
       text
     });
+  } catch {}
+}
+
+/* =========================
+   BOT INFO
+========================= */
+
+let BOT_USERNAME = "";
+
+async function loadBotInfo() {
+  try {
+    const me = await telegram("getMe");
+    BOT_USERNAME = me.username || "";
+
+    console.log(
+      `🤖 Bot: @${BOT_USERNAME}`
+    );
   } catch (error) {
-    console.log("Callback error:", error.message);
+    console.error(
+      "Bot info error:",
+      error.message
+    );
   }
 }
 
@@ -268,7 +279,7 @@ function clearSession(chatId) {
 }
 
 /* =========================
-   MAIN MENU
+   MENU
 ========================= */
 
 function mainKeyboard() {
@@ -280,10 +291,13 @@ function mainKeyboard() {
       ],
       [
         { text: "📊 Qabxii Koo" },
-        { text: "📚 Barnoota" }
+        { text: "👨‍🏫 Qormaata Koo" }
       ],
       [
-        { text: "👤 Profile" },
+        { text: "📚 Barnoota" },
+        { text: "👤 Profile" }
+      ],
+      [
         { text: "💼 Hojiiwwan Biroo" }
       ]
     ],
@@ -295,22 +309,28 @@ function mainKeyboard() {
    START
 ========================= */
 
-async function startBot(chatId, user) {
+async function startBot(chatId, user, examCode = null) {
   await saveUser(user);
 
   clearSession(chatId);
+
+  if (examCode) {
+    await loadExam(chatId, examCode);
+    return;
+  }
 
   await sendMessage(
     chatId,
     `🤖 *Baga nagaan dhuftan Waamara!*
 
-Waamara jechuun bot barnootaa fi qormaataa ti.
+Waamara — Bot Qormaataa fi Barnootaa.
 
-Tajaajiloota armaan gadii keessaa filadhu:
+Tajaajila barbaadde filadhu:
 
 📝 Qormaata Uumi
 📖 Qormaata Fudhadhu
 📊 Qabxii Koo
+👨‍🏫 Qormaata Koo
 📚 Barnoota
 👤 Profile
 💼 Hojiiwwan Biroo`,
@@ -327,7 +347,7 @@ Tajaajiloota armaan gadii keessaa filadhu:
 
 async function createExamStart(chatId) {
   setSession(chatId, {
-    action: "create_exam_title",
+    action: "create_title",
     exam: {
       questions: []
     }
@@ -335,12 +355,12 @@ async function createExamStart(chatId) {
 
   await sendMessage(
     chatId,
-    `📝 *Qormaata Uumuu*
+    `📝 *Qormaata Uumi*
 
 Maqaa qormaataa galchi.
 
 Fakkeenya:
-*Qormaata Herregaa Kutaa 8*`,
+Qormaata Herregaa Kutaa 8`,
     {
       parse_mode: "Markdown",
       reply_markup: {
@@ -356,26 +376,40 @@ async function saveExam(chatId) {
   const session = getSession(chatId);
   const exam = session.exam;
 
-  const codeResult = await db(
-    "SELECT code FROM exams ORDER BY id DESC LIMIT 1"
+  const lastRows = await db(
+    `
+    SELECT code
+    FROM exams
+    ORDER BY id DESC
+    LIMIT 1
+    `
   );
 
   let code = "1001";
 
-  if (codeResult.length > 0) {
-    const last = parseInt(codeResult[0].code, 10);
+  if (lastRows.length) {
+    const n = parseInt(
+      lastRows[0].code,
+      10
+    );
 
-    if (!isNaN(last)) {
-      code = String(last + 1);
+    if (!isNaN(n)) {
+      code = String(n + 1);
     }
   }
 
   const examRows = await db(
     `
     INSERT INTO exams
-      (code, title, subject, creator_id, duration_minutes)
+      (
+        code,
+        title,
+        subject,
+        creator_id,
+        duration_minutes
+      )
     VALUES
-      ($1, $2, $3, $4, $5)
+      ($1,$2,$3,$4,$5)
     RETURNING id
     `,
     [
@@ -383,21 +417,31 @@ async function saveExam(chatId) {
       exam.title,
       exam.subject,
       chatId,
-      exam.duration || 30
+      exam.duration
     ]
   );
 
   const examId = examRows[0].id;
 
-  for (let i = 0; i < exam.questions.length; i++) {
+  for (
+    let i = 0;
+    i < exam.questions.length;
+    i++
+  ) {
     const q = exam.questions[i];
 
-    const questionRows = await db(
+    const rows = await db(
       `
       INSERT INTO questions
-        (exam_id, question_text, question_type, points, question_order)
+        (
+          exam_id,
+          question_text,
+          question_type,
+          points,
+          question_order
+        )
       VALUES
-        ($1, $2, $3, $4, $5)
+        ($1,$2,$3,$4,$5)
       RETURNING id
       `,
       [
@@ -409,15 +453,20 @@ async function saveExam(chatId) {
       ]
     );
 
-    const questionId = questionRows[0].id;
+    const questionId = rows[0].id;
 
     for (const option of q.options) {
       await db(
         `
         INSERT INTO options
-          (question_id, option_key, option_text, is_correct)
+          (
+            question_id,
+            option_key,
+            option_text,
+            is_correct
+          )
         VALUES
-          ($1, $2, $3, $4)
+          ($1,$2,$3,$4)
         `,
         [
           questionId,
@@ -431,20 +480,33 @@ async function saveExam(chatId) {
 
   clearSession(chatId);
 
+  const link = BOT_USERNAME
+    ? `https://t.me/${BOT_USERNAME}?start=exam_${code}`
+    : `Botiin kee keessatti Code: ${code}`;
+
   await sendMessage(
     chatId,
-    `✅ *Qormaanni uumameera!*
+    `🎉 *QORMAATAAN UUMAMEERA!*
 
-📚 Maqaa: ${exam.title}
-📖 Barnoota: ${exam.subject}
-⏱ Yeroo: ${exam.duration || 30} daqiiqaa
-🔢 Lakkoofsa Qormaataa: *${code}*
-❓ Gaaffilee: ${exam.questions.length}
+📚 Maqaa:
+${exam.title}
 
-Barattoonni qormaata kana fudhachuuf lakkoofsa kana fayyadamu.
+📖 Barnoota:
+${exam.subject}
 
-🔗 Exam Code:
-*${code}*`,
+⏱ Yeroo:
+${exam.duration} daqiiqaa
+
+❓ Gaaffii:
+${exam.questions.length}
+
+🔢 Exam Code:
+*${code}*
+
+🔗 Exam Link:
+${link}
+
+Barattoonni link ykn code kana fayyadamuun qormaata fudhachuu danda'u.`,
     {
       parse_mode: "Markdown",
       reply_markup: mainKeyboard()
@@ -458,14 +520,14 @@ Barattoonni qormaata kana fudhachuuf lakkoofsa kana fayyadamu.
 
 async function takeExamStart(chatId) {
   setSession(chatId, {
-    action: "take_exam_code"
+    action: "take_code"
   });
 
   await sendMessage(
     chatId,
-    `📖 *Qormaata Fudhachuu*
+    `📖 *Qormaata Fudhadhu*
 
-Lakkoofsa qormaataa galchi.
+Exam Code galchi.
 
 Fakkeenya:
 *1001*`,
@@ -488,13 +550,17 @@ async function loadExam(chatId, code) {
     WHERE code = $1
       AND status = 'active'
     `,
-    [code]
+    [String(code).trim()]
   );
 
-  if (exams.length === 0) {
+  if (!exams.length) {
     await sendMessage(
       chatId,
-      "❌ Qormaanni lakkoofsa kana qabu hin argamne."
+      `❌ Qormaata Code *${code}* qabu hin argamne.`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: mainKeyboard()
+      }
     );
     return;
   }
@@ -506,12 +572,12 @@ async function loadExam(chatId, code) {
     SELECT *
     FROM questions
     WHERE exam_id = $1
-    ORDER BY question_order ASC, id ASC
+    ORDER BY question_order ASC,id ASC
     `,
     [exam.id]
   );
 
-  if (questions.length === 0) {
+  if (!questions.length) {
     await sendMessage(
       chatId,
       "❌ Qormaanni kun gaaffii hin qabu."
@@ -521,25 +587,28 @@ async function loadExam(chatId, code) {
 
   const fullQuestions = [];
 
-  for (const question of questions) {
+  for (const q of questions) {
     const options = await db(
       `
-      SELECT option_key, option_text, is_correct
+      SELECT
+        option_key,
+        option_text,
+        is_correct
       FROM options
       WHERE question_id = $1
       ORDER BY id ASC
       `,
-      [question.id]
+      [q.id]
     );
 
     fullQuestions.push({
-      ...question,
+      ...q,
       options
     });
   }
 
   setSession(chatId, {
-    action: "take_exam_name",
+    action: "student_name",
     exam: {
       ...exam,
       questions: fullQuestions
@@ -554,7 +623,7 @@ async function loadExam(chatId, code) {
 ❓ Gaaffii: ${questions.length}
 ⏱ Yeroo: ${exam.duration_minutes} daqiiqaa
 
-Maqaa kee galchi:`,
+👤 Maqaa kee galchi:`,
     {
       parse_mode: "Markdown",
       reply_markup: {
@@ -566,66 +635,128 @@ Maqaa kee galchi:`,
   );
 }
 
+/* =========================
+   START ATTEMPT
+========================= */
+
 async function startExam(chatId, studentName) {
   const session = getSession(chatId);
 
-  const attemptRows = await db(
+  const totalPoints =
+    session.exam.questions.reduce(
+      (sum, q) =>
+        sum + Number(q.points || 1),
+      0
+    );
+
+  const rows = await db(
     `
     INSERT INTO attempts
-      (exam_id, student_id, student_name, total_points)
+      (
+        exam_id,
+        student_id,
+        student_name,
+        total_points
+      )
     VALUES
-      ($1, $2, $3, $4)
-    RETURNING id
+      ($1,$2,$3,$4)
+    RETURNING id, started_at
     `,
     [
       session.exam.id,
       chatId,
       studentName,
-      session.exam.questions.reduce(
-        (sum, q) => sum + Number(q.points || 1),
-        0
-      )
+      totalPoints
     ]
   );
 
   setSession(chatId, {
-    action: "answer_question",
+    action: "answer",
     studentName,
-    attemptId: attemptRows[0].id,
+    attemptId: rows[0].id,
+    startedAt: new Date(rows[0].started_at).getTime(),
     questionIndex: 0,
     score: 0
   });
 
+  await sendMessage(
+    chatId,
+    `🚀 *Qormaanni jalqabeera!*
+
+⏱ Yeroo:
+${session.exam.duration_minutes} daqiiqaa
+
+Deebii kee filadhu.`,
+    {
+      parse_mode: "Markdown"
+    }
+  );
+
   await sendQuestion(chatId);
 }
 
+/* =========================
+   TIMER CHECK
+========================= */
+
+function timeExpired(session) {
+  if (!session.startedAt) {
+    return false;
+  }
+
+  const duration =
+    Number(session.exam.duration_minutes || 30) *
+    60 *
+    1000;
+
+  return (
+    Date.now() - session.startedAt >= duration
+  );
+}
+
+/* =========================
+   QUESTION
+========================= */
+
 async function sendQuestion(chatId) {
   const session = getSession(chatId);
-  const question = session.exam.questions[session.questionIndex];
 
-  if (!question) {
+  if (timeExpired(session)) {
+    await finishExam(
+      chatId,
+      true
+    );
+    return;
+  }
+
+  const q =
+    session.exam.questions[
+      session.questionIndex
+    ];
+
+  if (!q) {
     await finishExam(chatId);
     return;
   }
 
-  const buttons = [];
-
-  for (const option of question.options) {
-    buttons.push([
+  const buttons = q.options.map(
+    option => [
       {
-        text: `${option.option_key}. ${option.option_text}`,
-        callback_data: `answer:${question.id}:${option.option_key}`
+        text:
+          `${option.option_key}. ${option.option_text}`,
+        callback_data:
+          `answer:${q.id}:${option.option_key}`
       }
-    ]);
-  }
+    ]
+  );
 
   await sendMessage(
     chatId,
     `❓ *Gaaffii ${session.questionIndex + 1}/${session.exam.questions.length}*
 
-${question.question_text}
+${q.question_text}
 
-📌 Qabxii: ${question.points || 1}`,
+🏆 Qabxii: ${q.points || 1}`,
     {
       parse_mode: "Markdown",
       reply_markup: {
@@ -639,69 +770,91 @@ ${question.question_text}
    ANSWER
 ========================= */
 
-async function handleAnswer(chatId, questionId, selectedOption) {
+async function handleAnswer(
+  chatId,
+  questionId,
+  selectedOption
+) {
   const session = getSession(chatId);
 
-  if (session.action !== "answer_question") {
+  if (session.action !== "answer") {
     return;
   }
 
-  const question = session.exam.questions.find(
-    q => String(q.id) === String(questionId)
-  );
-
-  if (!question) {
+  if (timeExpired(session)) {
+    await finishExam(
+      chatId,
+      true
+    );
     return;
   }
 
-  const correctOption = question.options.find(
-    o => o.is_correct
-  );
+  const q =
+    session.exam.questions.find(
+      x => String(x.id) === String(questionId)
+    );
+
+  if (!q) {
+    return;
+  }
+
+  const correct =
+    q.options.find(
+      x => x.is_correct
+    );
 
   const isCorrect =
-    correctOption &&
-    correctOption.option_key === selectedOption;
+    correct &&
+    correct.option_key === selectedOption;
 
   const points = isCorrect
-    ? Number(question.points || 1)
+    ? Number(q.points || 1)
     : 0;
 
   await db(
     `
     INSERT INTO answers
-      (attempt_id, question_id, selected_option, is_correct, points_earned)
+      (
+        attempt_id,
+        question_id,
+        selected_option,
+        is_correct,
+        points_earned
+      )
     VALUES
-      ($1, $2, $3, $4, $5)
+      ($1,$2,$3,$4,$5)
     `,
     [
       session.attemptId,
-      question.id,
+      q.id,
       selectedOption,
       isCorrect,
       points
     ]
   );
 
-  let newScore = Number(session.score || 0);
-
-  if (isCorrect) {
-    newScore += points;
-  }
+  const score =
+    Number(session.score || 0) +
+    points;
 
   setSession(chatId, {
-    score: newScore,
-    questionIndex: session.questionIndex + 1
+    score,
+    questionIndex:
+      session.questionIndex + 1
   });
 
   if (isCorrect) {
-    await sendMessage(chatId, "✅ Deebiin kee sirrii dha!");
+    await sendMessage(
+      chatId,
+      "✅ Deebiin kee sirrii dha!"
+    );
   } else {
     await sendMessage(
       chatId,
       `❌ Deebiin kee sirrii miti.
 
 ✅ Deebiin sirrii:
-${correctOption ? correctOption.option_key : "-"}`
+${correct ? correct.option_key : "-"}`
     );
   }
 
@@ -709,18 +862,31 @@ ${correctOption ? correctOption.option_key : "-"}`
 }
 
 /* =========================
-   FINISH EXAM
+   FINISH
 ========================= */
 
-async function finishExam(chatId) {
+async function finishExam(
+  chatId,
+  expired = false
+) {
   const session = getSession(chatId);
 
-  const totalPoints = session.exam.questions.reduce(
-    (sum, q) => sum + Number(q.points || 1),
-    0
-  );
+  if (
+    !session.attemptId ||
+    !session.exam
+  ) {
+    return;
+  }
 
-  const score = Number(session.score || 0);
+  const totalPoints =
+    session.exam.questions.reduce(
+      (sum, q) =>
+        sum + Number(q.points || 1),
+      0
+    );
+
+  const score =
+    Number(session.score || 0);
 
   const percentage =
     totalPoints > 0
@@ -763,26 +929,36 @@ async function finishExam(chatId) {
     [session.attemptId]
   );
 
-  const correct = correctRows[0].count;
-  const wrong = wrongRows[0].count;
+  const correct =
+    correctRows[0]?.count || 0;
+
+  const wrong =
+    wrongRows[0]?.count || 0;
 
   clearSession(chatId);
 
   await sendMessage(
     chatId,
-    `🎉 *Qormaata xumurteetta!*
+    `${expired ? "⏰ *Yeroon Qormaataa Xumurameera!*\n\n" : "🎉 *Qormaata Xumurteetta!*\n\n"}
 
-📚 Qormaata: ${session.exam.title}
+📚 ${session.exam.title}
 
-👤 Barataa: ${session.studentName}
+👤 Barataa:
+${session.studentName}
 
-🏆 Qabxii: *${score}/${totalPoints}*
-📊 Percentage: *${percentage}%*
+🏆 Qabxii:
+*${score}/${totalPoints}*
 
-✅ Sirrii: ${correct}
-❌ Sirrii hin taane: ${wrong}
+📊 Percentage:
+*${percentage}%*
 
-Galmee kee database keessatti kuufameera.`,
+✅ Sirrii:
+${correct}
+
+❌ Sirrii hin taane:
+${wrong}
+
+💾 Bu'aan kee database keessatti kuufameera.`,
     {
       parse_mode: "Markdown",
       reply_markup: mainKeyboard()
@@ -791,7 +967,7 @@ Galmee kee database keessatti kuufameera.`,
 }
 
 /* =========================
-   MY RESULTS
+   STUDENT RESULTS
 ========================= */
 
 async function myResults(chatId) {
@@ -805,47 +981,52 @@ async function myResults(chatId) {
       a.percentage,
       a.submitted_at
     FROM attempts a
-    JOIN exams e ON e.id = a.exam_id
+    JOIN exams e
+      ON e.id = a.exam_id
     WHERE a.student_id = $1
       AND a.submitted_at IS NOT NULL
     ORDER BY a.submitted_at DESC
-    LIMIT 10
+    LIMIT 20
     `,
     [chatId]
   );
 
-  if (rows.length === 0) {
+  if (!rows.length) {
     await sendMessage(
       chatId,
       `📊 *Qabxii Koo*
 
-Ammaaf qormaata xumurte tokko illee hin qabdu.`,
+Qormaata xumurte hin qabdu.`,
       {
         parse_mode: "Markdown"
       }
     );
-
     return;
   }
 
-  let text = "📊 *Qabxii Koo*\n\n";
+  let text =
+    "📊 *QABXII KOO*\n\n";
 
-  rows.forEach((row, index) => {
+  rows.forEach((r, i) => {
     text +=
-      `${index + 1}. *${row.title}*\n` +
-      `📖 ${row.subject || "-"}\n` +
-      `🏆 ${row.score}/${row.total_points}\n` +
-      `📊 ${row.percentage}%\n\n`;
+      `${i + 1}. *${r.title}*\n` +
+      `📖 ${r.subject || "-"}\n` +
+      `🏆 ${r.score}/${r.total_points}\n` +
+      `📊 ${r.percentage}%\n\n`;
   });
 
-  await sendMessage(chatId, text, {
-    parse_mode: "Markdown",
-    reply_markup: mainKeyboard()
-  });
+  await sendMessage(
+    chatId,
+    text,
+    {
+      parse_mode: "Markdown",
+      reply_markup: mainKeyboard()
+    }
+  );
 }
 
 /* =========================
-   MY EXAMS - TEACHER
+   TEACHER EXAMS
 ========================= */
 
 async function myExams(chatId) {
@@ -856,10 +1037,11 @@ async function myExams(chatId) {
       e.code,
       e.title,
       e.subject,
-      e.created_at,
-      COUNT(DISTINCT q.id)::int AS questions
+      e.duration_minutes,
+      COUNT(q.id)::int AS questions
     FROM exams e
-    LEFT JOIN questions q ON q.exam_id = e.id
+    LEFT JOIN questions q
+      ON q.exam_id = e.id
     WHERE e.creator_id = $1
     GROUP BY e.id
     ORDER BY e.created_at DESC
@@ -867,28 +1049,123 @@ async function myExams(chatId) {
     [chatId]
   );
 
-  if (exams.length === 0) {
+  if (!exams.length) {
     await sendMessage(
       chatId,
-      "📝 Ati hanga ammaatti qormaata hin uumne."
+      "👨‍🏫 Ati hanga ammaatti qormaata hin uumne."
     );
     return;
   }
 
-  let text = "📝 *Qormaata Koo*\n\n";
+  let text =
+    "👨‍🏫 *QORMAATA KOO*\n\n";
 
-  exams.forEach((exam, index) => {
+  exams.forEach((e, i) => {
     text +=
-      `${index + 1}. *${exam.title}*\n` +
-      `📖 ${exam.subject || "-"}\n` +
-      `🔢 Code: *${exam.code}*\n` +
-      `❓ Gaaffii: ${exam.questions}\n\n`;
+      `${i + 1}. *${e.title}*\n` +
+      `📖 ${e.subject || "-"}\n` +
+      `🔢 Code: *${e.code}*\n` +
+      `❓ Gaaffii: ${e.questions}\n` +
+      `⏱ ${e.duration_minutes} daqiiqaa\n\n`;
   });
 
-  await sendMessage(chatId, text, {
-    parse_mode: "Markdown",
-    reply_markup: mainKeyboard()
+  await sendMessage(
+    chatId,
+    text,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: exams.map(e => [
+          {
+            text: `📊 Bu'aa ${e.code}`,
+            callback_data: `results:${e.id}`
+          }
+        ])
+      }
+    }
+  );
+}
+
+/* =========================
+   TEACHER RESULTS
+========================= */
+
+async function teacherResults(
+  chatId,
+  examId
+) {
+  const exams = await db(
+    `
+    SELECT *
+    FROM exams
+    WHERE id = $1
+      AND creator_id = $2
+    `,
+    [examId, chatId]
+  );
+
+  if (!exams.length) {
+    await sendMessage(
+      chatId,
+      "❌ Qormaata kana ilaaluuf hayyama hin qabdu."
+    );
+    return;
+  }
+
+  const exam = exams[0];
+
+  const results = await db(
+    `
+    SELECT
+      student_name,
+      student_id,
+      score,
+      total_points,
+      percentage,
+      submitted_at
+    FROM attempts
+    WHERE exam_id = $1
+      AND submitted_at IS NOT NULL
+    ORDER BY percentage DESC
+    `,
+    [examId]
+  );
+
+  if (!results.length) {
+    await sendMessage(
+      chatId,
+      `📊 *Bu'aa Qormaataa*
+
+📚 ${exam.title}
+
+Barataan qormaata kana hin xumurre.`,
+      {
+        parse_mode: "Markdown"
+      }
+    );
+    return;
+  }
+
+  let text =
+    `📊 *BU'AA QORMAATAA*\n\n` +
+    `📚 *${exam.title}*\n` +
+    `🔢 Code: ${exam.code}\n\n`;
+
+  results.forEach((r, i) => {
+    text +=
+      `${i + 1}. 👤 ${r.student_name}\n` +
+      `🏆 ${r.score}/${r.total_points}\n` +
+      `📊 ${r.percentage}%\n\n`;
   });
+
+  await sendMessage(
+    chatId,
+    text,
+    {
+      parse_mode: "Markdown",
+      reply_markup: mainKeyboard()
+    }
+  );
 }
 
 /* =========================
@@ -896,38 +1173,57 @@ async function myExams(chatId) {
 ========================= */
 
 async function profile(chatId) {
-  const userRows = await db(
-    "SELECT * FROM users WHERE id = $1",
+  const users = await db(
+    `
+    SELECT *
+    FROM users
+    WHERE id = $1
+    `,
     [chatId]
   );
 
-  if (userRows.length === 0) {
-    await sendMessage(chatId, "❌ Profile hin argamne.");
+  if (!users.length) {
     return;
   }
 
-  const user = userRows[0];
+  const user = users[0];
 
   const created = await db(
-    "SELECT COUNT(*)::int AS count FROM exams WHERE creator_id = $1",
+    `
+    SELECT COUNT(*)::int AS count
+    FROM exams
+    WHERE creator_id = $1
+    `,
     [chatId]
   );
 
   const taken = await db(
-    "SELECT COUNT(*)::int AS count FROM attempts WHERE student_id = $1",
+    `
+    SELECT COUNT(*)::int AS count
+    FROM attempts
+    WHERE student_id = $1
+    `,
     [chatId]
   );
 
   await sendMessage(
     chatId,
-    `👤 *Profile*
+    `👤 *PROFILE*
 
-🆔 Telegram ID: ${user.id}
-👤 Maqaa: ${user.first_name || "-"} ${user.last_name || ""}
-🔹 Username: @${user.username || "-"}
+👤 Maqaa:
+${user.first_name || ""} ${user.last_name || ""}
 
-📝 Qormaata uumte: ${created[0].count}
-📖 Qormaata fudhatte: ${taken[0].count}`,
+🔹 Username:
+@${user.username || "-"}
+
+📝 Qormaata uumte:
+${created[0].count}
+
+📖 Qormaata fudhatte:
+${taken[0].count}
+
+🆔 Telegram ID:
+${user.id}`,
     {
       parse_mode: "Markdown",
       reply_markup: mainKeyboard()
@@ -936,23 +1232,23 @@ async function profile(chatId) {
 }
 
 /* =========================
-   OTHER SERVICES
+   EDUCATION
 ========================= */
 
 async function education(chatId) {
   await sendMessage(
     chatId,
-    `📚 *Barnoota*
+    `📚 *BARNOOTA*
 
-Waamara keessatti tajaajiloonni barnootaa gara fuulduraatti ni dabalamau.
+Waamara keessatti tajaajiloota barnootaa:
 
-• 📖 Barnoota
-• ❓ Gaaffii fi Deebii
-• 📝 Shaakala
-• 📊 Qormaata
-• 🎓 Qabxii fi bu'aa
+📖 Barnoota
+📝 Qormaata
+❓ Gaaffii fi Deebii
+🎓 Shaakala
+📊 Bu'aa barattootaa
 
-Tajaajiloota kana gara fuulduraatti bal'inaan ni ijaarra.`,
+Tajaajiloota dabalataa gara fuulduraatti ni daballa.`,
     {
       parse_mode: "Markdown",
       reply_markup: mainKeyboard()
@@ -960,10 +1256,14 @@ Tajaajiloota kana gara fuulduraatti bal'inaan ni ijaarra.`,
   );
 }
 
+/* =========================
+   OTHER
+========================= */
+
 async function otherServices(chatId) {
   await sendMessage(
     chatId,
-    `💼 *Hojiiwwan Biroo*
+    `💼 *HOJIIWWAN BIROO*
 
 Waamara gara fuulduraatti:
 
@@ -971,7 +1271,7 @@ Waamara gara fuulduraatti:
 📢 Beeksisa
 📚 Faayila barnootaa
 ❓ Gaaffii fi deebii
-👥 Hawaasa barattootaa
+👥 Hawaasa
 📨 Ergaa
 
 fi tajaajila biroo ni qabaata.`,
@@ -987,28 +1287,48 @@ fi tajaajila biroo ni qabaata.`,
 ========================= */
 
 async function handleMessage(message) {
-  if (!message || !message.chat) {
-    return;
-  }
+  if (!message?.chat) return;
 
   const chatId = message.chat.id;
   const user = message.from || {};
+  const text = (message.text || "").trim();
 
   await saveUser(user);
 
-  const text = (message.text || "").trim();
+  if (text.startsWith("/start")) {
+    const parts = text.split(" ");
 
-  if (text === "/start") {
-    await startBot(chatId, user);
+    let examCode = null;
+
+    if (
+      parts[1] &&
+      parts[1].startsWith("exam_")
+    ) {
+      examCode =
+        parts[1].replace(
+          "exam_",
+          ""
+        );
+    }
+
+    await startBot(
+      chatId,
+      user,
+      examCode
+    );
+
     return;
   }
 
-  if (text === "❌ Haqi" || text === "/cancel") {
+  if (
+    text === "❌ Haqi" ||
+    text === "/cancel"
+  ) {
     clearSession(chatId);
 
     await sendMessage(
       chatId,
-      "❌ Hojii haqameera.",
+      "❌ Hojichi haqameera.",
       {
         reply_markup: mainKeyboard()
       }
@@ -1017,32 +1337,37 @@ async function handleMessage(message) {
     return;
   }
 
-  const session = getSession(chatId);
+  const session =
+    getSession(chatId);
 
-  /* CREATE EXAM */
+  /* CREATE */
 
   if (text === "📝 Qormaata Uumi") {
     await createExamStart(chatId);
     return;
   }
 
-  if (session.action === "create_exam_title") {
+  if (
+    session.action === "create_title"
+  ) {
     session.exam.title = text;
-    session.action = "create_exam_subject";
+    session.action = "create_subject";
 
     setSession(chatId, session);
 
     await sendMessage(
       chatId,
-      "📖 Barnoota/Subject qormaataa galchi.\n\nFakkeenya: Herrega"
+      "📖 Barnoota/Subject galchi."
     );
 
     return;
   }
 
-  if (session.action === "create_exam_subject") {
+  if (
+    session.action === "create_subject"
+  ) {
     session.exam.subject = text;
-    session.action = "create_exam_duration";
+    session.action = "create_duration";
 
     setSession(chatId, session);
 
@@ -1054,10 +1379,16 @@ async function handleMessage(message) {
     return;
   }
 
-  if (session.action === "create_exam_duration") {
-    const duration = parseInt(text, 10);
+  if (
+    session.action === "create_duration"
+  ) {
+    const duration =
+      parseInt(text, 10);
 
-    if (isNaN(duration) || duration <= 0) {
+    if (
+      isNaN(duration) ||
+      duration <= 0
+    ) {
       await sendMessage(
         chatId,
         "❌ Lakkoofsa sirrii galchi. Fakkeenya: 30"
@@ -1065,8 +1396,11 @@ async function handleMessage(message) {
       return;
     }
 
-    session.exam.duration = duration;
-    session.action = "create_question";
+    session.exam.duration =
+      duration;
+
+    session.action =
+      "create_question";
 
     setSession(chatId, session);
 
@@ -1078,14 +1412,18 @@ async function handleMessage(message) {
     return;
   }
 
-  if (session.action === "create_question") {
+  if (
+    session.action ===
+    "create_question"
+  ) {
     session.exam.questions.push({
       text,
       options: [],
       correct: null
     });
 
-    session.action = "option_a";
+    session.action =
+      "option_a";
 
     setSession(chatId, session);
 
@@ -1097,83 +1435,113 @@ async function handleMessage(message) {
     return;
   }
 
-  if (session.action === "option_a") {
-    const q = session.exam.questions.at(-1);
+  if (
+    session.action === "option_a"
+  ) {
+    const q =
+      session.exam.questions.at(-1);
 
     q.options.push({
       key: "A",
       text
     });
 
-    session.action = "option_b";
+    session.action =
+      "option_b";
 
     setSession(chatId, session);
 
-    await sendMessage(chatId, "🅱️ Filannoo B galchi.");
+    await sendMessage(
+      chatId,
+      "🅱️ Filannoo B galchi."
+    );
 
     return;
   }
 
-  if (session.action === "option_b") {
-    const q = session.exam.questions.at(-1);
+  if (
+    session.action === "option_b"
+  ) {
+    const q =
+      session.exam.questions.at(-1);
 
     q.options.push({
       key: "B",
       text
     });
 
-    session.action = "option_c";
+    session.action =
+      "option_c";
 
     setSession(chatId, session);
 
-    await sendMessage(chatId, "©️ Filannoo C galchi.");
+    await sendMessage(
+      chatId,
+      "©️ Filannoo C galchi."
+    );
 
     return;
   }
 
-  if (session.action === "option_c") {
-    const q = session.exam.questions.at(-1);
+  if (
+    session.action === "option_c"
+  ) {
+    const q =
+      session.exam.questions.at(-1);
 
     q.options.push({
       key: "C",
       text
     });
 
-    session.action = "option_d";
+    session.action =
+      "option_d";
 
     setSession(chatId, session);
 
-    await sendMessage(chatId, "🅳 Filannoo D galchi.");
+    await sendMessage(
+      chatId,
+      "🅳 Filannoo D galchi."
+    );
 
     return;
   }
 
-  if (session.action === "option_d") {
-    const q = session.exam.questions.at(-1);
+  if (
+    session.action === "option_d"
+  ) {
+    const q =
+      session.exam.questions.at(-1);
 
     q.options.push({
       key: "D",
       text
     });
 
-    session.action = "correct_answer";
+    session.action =
+      "correct";
 
     setSession(chatId, session);
 
     await sendMessage(
       chatId,
-      `✅ Deebii sirrii filadhu.
-
-A, B, C ykn D qofa galchi.`
+      "✅ Deebii sirrii galchi: A, B, C ykn D."
     );
 
     return;
   }
 
-  if (session.action === "correct_answer") {
-    const answer = text.toUpperCase();
+  if (
+    session.action === "correct"
+  ) {
+    const answer =
+      text.toUpperCase();
 
-    if (!["A", "B", "C", "D"].includes(answer)) {
+    if (
+      !["A", "B", "C", "D"].includes(
+        answer
+      )
+    ) {
       await sendMessage(
         chatId,
         "❌ A, B, C ykn D qofa galchi."
@@ -1181,24 +1549,24 @@ A, B, C ykn D qofa galchi.`
       return;
     }
 
-    const q = session.exam.questions.at(-1);
+    const q =
+      session.exam.questions.at(-1);
+
     q.correct = answer;
 
-    session.action = "more_questions";
+    session.action =
+      "more_questions";
 
     setSession(chatId, session);
 
     await sendMessage(
       chatId,
-      `✅ Gaaffiin ${session.exam.questions.length} qophaa'eera.
+      `✅ Gaaffiin qophaa'eera.
 
-Gaaffii biraa dabaluuf:
-👉 *Eeyyee*
-
-Yoo xumurte:
-👉 *Lakki*`,
+Gaaffii biraa dabalaa?
+👉 Eeyyee
+👉 Lakki`,
       {
-        parse_mode: "Markdown",
         reply_markup: {
           keyboard: [
             [
@@ -1217,30 +1585,31 @@ Yoo xumurte:
     return;
   }
 
-  if (session.action === "more_questions") {
-    const answer = text.toLowerCase();
-
-    if (answer === "eeyyee" || answer === "yes") {
-      session.action = "create_question";
+  if (
+    session.action ===
+    "more_questions"
+  ) {
+    if (
+      text.toLowerCase() ===
+      "eeyyee"
+    ) {
+      session.action =
+        "create_question";
 
       setSession(chatId, session);
 
       await sendMessage(
         chatId,
-        `❓ Gaaffii #${session.exam.questions.length + 1} galchi.`,
-        {
-          reply_markup: {
-            keyboard: [[{ text: "❌ Haqi" }],
-            ],
-            resize_keyboard: true
-          }
-        }
+        `❓ Gaaffii #${session.exam.questions.length + 1} galchi.`
       );
 
       return;
     }
 
-    if (answer === "lakki" || answer === "no") {
+    if (
+      text.toLowerCase() ===
+      "lakki"
+    ) {
       await saveExam(chatId);
       return;
     }
@@ -1253,19 +1622,28 @@ Yoo xumurte:
     return;
   }
 
-  /* TAKE EXAM */
+  /* TAKE */
 
-  if (text === "📖 Qormaata Fudhadhu") {
+  if (
+    text === "📖 Qormaata Fudhadhu"
+  ) {
     await takeExamStart(chatId);
     return;
   }
 
-  if (session.action === "take_exam_code") {
-    await loadExam(chatId, text);
+  if (
+    session.action === "take_code"
+  ) {
+    await loadExam(
+      chatId,
+      text
+    );
     return;
   }
 
-  if (session.action === "take_exam_name") {
+  if (
+    session.action === "student_name"
+  ) {
     if (text.length < 2) {
       await sendMessage(
         chatId,
@@ -1274,14 +1652,29 @@ Yoo xumurte:
       return;
     }
 
-    await startExam(chatId, text);
+    await startExam(
+      chatId,
+      text
+    );
+
     return;
   }
 
   /* RESULTS */
 
-  if (text === "📊 Qabxii Koo") {
+  if (
+    text === "📊 Qabxii Koo"
+  ) {
     await myResults(chatId);
+    return;
+  }
+
+  /* TEACHER */
+
+  if (
+    text === "👨‍🏫 Qormaata Koo"
+  ) {
+    await myExams(chatId);
     return;
   }
 
@@ -1301,16 +1694,16 @@ Yoo xumurte:
 
   /* OTHER */
 
-  if (text === "💼 Hojiiwwan Biroo") {
+  if (
+    text === "💼 Hojiiwwan Biroo"
+  ) {
     await otherServices(chatId);
     return;
   }
 
-  /* DEFAULT */
-
   await sendMessage(
     chatId,
-    "🤖 Ajaja kana hin hubanne. Maaloo menu keessaa filadhu.",
+    "🤖 Maaloo menu keessaa filadhu.",
     {
       reply_markup: mainKeyboard()
     }
@@ -1318,30 +1711,51 @@ Yoo xumurte:
 }
 
 /* =========================
-   CALLBACK HANDLER
+   CALLBACK
 ========================= */
 
 async function handleCallback(callback) {
-  if (!callback || !callback.message) {
+  if (!callback?.message) {
     return;
   }
 
-  const chatId = callback.message.chat.id;
-  const data = callback.data || "";
+  const chatId =
+    callback.message.chat.id;
 
-  await answerCallback(callback.id);
+  const data =
+    callback.data || "";
 
-  if (data.startsWith("answer:")) {
-    const parts = data.split(":");
+  await answerCallback(
+    callback.id
+  );
 
-    const questionId = parts[1];
-    const selectedOption = parts[2];
+  if (
+    data.startsWith("answer:")
+  ) {
+    const parts =
+      data.split(":");
 
     await handleAnswer(
       chatId,
-      questionId,
-      selectedOption
+      parts[1],
+      parts[2]
     );
+
+    return;
+  }
+
+  if (
+    data.startsWith("results:")
+  ) {
+    const examId =
+      data.split(":")[1];
+
+    await teacherResults(
+      chatId,
+      examId
+    );
+
+    return;
   }
 }
 
@@ -1353,29 +1767,39 @@ let offset = 0;
 let polling = false;
 
 async function pollTelegram() {
-  if (polling) {
-    return;
-  }
+  if (polling) return;
 
   polling = true;
 
   try {
-    const updates = await telegram("getUpdates", {
-      offset,
-      timeout: 25,
-      allowed_updates: ["message", "callback_query"]
-    });
+    const updates =
+      await telegram(
+        "getUpdates",
+        {
+          offset,
+          timeout: 25,
+          allowed_updates: [
+            "message",
+            "callback_query"
+          ]
+        }
+      );
 
     for (const update of updates) {
-      offset = update.update_id + 1;
+      offset =
+        update.update_id + 1;
 
       try {
         if (update.message) {
-          await handleMessage(update.message);
+          await handleMessage(
+            update.message
+          );
         }
 
         if (update.callback_query) {
-          await handleCallback(update.callback_query);
+          await handleCallback(
+            update.callback_query
+          );
         }
       } catch (error) {
         console.error(
@@ -1386,26 +1810,51 @@ async function pollTelegram() {
     }
   } catch (error) {
     console.error(
-      "Telegram polling error:",
+      "Polling error:",
       error.message
     );
-  } finally {
-    polling = false;
-
-    setTimeout(
-      pollTelegram,
-      1000
-    );
   }
+
+  polling = false;
+
+  setTimeout(
+    pollTelegram,
+    1000
+  );
 }
 
 /* =========================
-   START SERVER
+   START
 ========================= */
 
 async function start() {
   try {
     await initDatabase();
+
+    await telegram(
+      "deleteWebhook",
+      {
+        drop_pending_updates: false
+      }
+    );
+
+    await loadBotInfo();
+
+    await telegram(
+      "setMyCommands",
+      {
+        commands: [
+          {
+            command: "start",
+            description: "Waamara jalqabi"
+          },
+          {
+            command: "cancel",
+            description: "Hojii haqii"
+          }
+        ]
+      }
+    );
 
     app.listen(
       PORT,
@@ -1420,7 +1869,7 @@ async function start() {
     );
   } catch (error) {
     console.error(
-      "❌ Server startup failed:",
+      "❌ Startup failed:",
       error
     );
 
