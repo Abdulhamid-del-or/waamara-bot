@@ -248,7 +248,10 @@ async function migrateDatabase() {
       points INTEGER DEFAULT 1
     )
   `);
-
+await pool.query(`
+  ALTER TABLE questions
+  ADD COLUMN IF NOT EXISTS correct_answer TEXT
+`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS options (
       id SERIAL PRIMARY KEY,
