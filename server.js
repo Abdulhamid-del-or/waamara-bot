@@ -169,7 +169,35 @@ async function migrateDatabase() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
   `);
+await pool.query(`
+  ALTER TABLE attempts
+  ADD COLUMN IF NOT EXISTS total INTEGER DEFAULT 0
+`);
 
+await pool.query(`
+  ALTER TABLE attempts
+  ADD COLUMN IF NOT EXISTS score INTEGER DEFAULT 0
+`);
+
+await pool.query(`
+  ALTER TABLE attempts
+  ADD COLUMN IF NOT EXISTS percentage NUMERIC DEFAULT 0
+`);
+
+await pool.query(`
+  ALTER TABLE attempts
+  ADD COLUMN IF NOT EXISTS started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+`);
+
+await pool.query(`
+  ALTER TABLE attempts
+  ADD COLUMN IF NOT EXISTS finished_at TIMESTAMP
+`);
+
+await pool.query(`
+  ALTER TABLE attempts
+  ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP
+`);
   /*
    Existing users table keessatti id default yoo hin jirre
    sequence sirreessa.
