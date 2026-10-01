@@ -1,12 +1,15 @@
 {
   "name": "waamara-bot",
   "version": "1.0.0",
-  "description": "Waamara - Qormaata fi hojiiwwan adda addaa Telegram Bot",
+  "description": "Waamara Telegram Bot - Qormaata uumuu, qormaata fudhachuu, qabxii agarsiisuu fi tajaajila adda addaa.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
   }
 }
