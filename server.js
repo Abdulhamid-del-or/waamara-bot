@@ -9,117 +9,116 @@ const PORT = process.env.PORT || 10000;
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const DATABASE_URL = process.env.DATABASE_URL;
 
-const RENDER_URL =
-  process.env.RENDER_EXTERNAL_URL ||
-  "https://waamara-bot.onrender.com";
+if (!BOT_TOKEN) {
+  console.error("❌ TELEGRAM_BOT_TOKEN hin argamne.");
+}
 
-if (!BOT_TOKEN) console.error("❌ TELEGRAM_BOT_TOKEN hin jiru.");
-if (!DATABASE_URL) console.error("❌ DATABASE_URL hin jiru.");
+if (!DATABASE_URL) {
+  console.error("❌ DATABASE_URL hin argamne.");
+}
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
-
-// ======================================================
-// SESSION
-// ======================================================
-
-const sessions = new Map();
-
-// ======================================================
-// HOME
-// ======================================================
-
-app.get("/", (req, res) => {
-  res.send("🤖 Waamara Bot online.");
-});
-
-app.get("/health", async (req, res) => {
-  try {
-    await pool.query("SELECT 1");
-
-    res.json({
-      ok: true,
-      bot: "Waamara",
-      database: "connected"
-    });
-  } catch (e) {
-    res.status(500).json({
-      ok: false,
-      error: e.message
-    });
+  ssl: {
+    rejectUnauthorized: false
   }
 });
 
-// ======================================================
-// TELEGRAM API
-// ======================================================
+/* =========================
+   SESSION
+========================= */
+
+const sessions = new Map();
+
+/*
+session:
+{
+  step: "...",
+  title,
+  subject,
+  duration,
+  examId,
+  examCode,
+  question,
+  options: {},
+  correctAnswer,
+  points,
+  attemptId,
+  questionIndex
+}
+*/
+
+/* =========================
+   TELEGRAM API
+========================= */
 
 function telegram(method, data = {}) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(data);
 
-    const options = {
-      hostname: "api.telegram.org",
-      path: `/bot${BOT_TOKEN}/${method}`,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(body)
-      }
-    };
-
-    const request = https.request(options, response => {
-      let result = "";
-
-      response.on("data", chunk => {
-        result += chunk;
-      });
-
-      response.on("end", () => {
-        try {
-          const json = JSON.parse(result);
-
-          if (!json.ok) {
-            reject(new Error(json.description || "Telegram error"));
-            return;
-          }
-
-          resolve(json.result);
-        } catch (e) {
-          reject(e);
+    const req = https.request(
+      {
+        hostname: "api.telegram.org",
+        path: `/bot${BOT_TOKEN}/${method}`,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body)
         }
-      });
-    });
+      },
+      (res) => {
+        let result = "";
 
-    request.on("error", reject);
+        res.on("data", (chunk) => {
+          result += chunk;
+        });
 
-    request.write(body);
-    request.end();
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(result);
+
+            if (!json.ok) {
+              reject(new Error(json.description || "Telegram API error"));
+              return;
+            }
+
+            resolve(json.result);
+          } catch (err) {
+            reject(err);
+          }
+        });
+      }
+    );
+
+    req.on("error", reject);
+
+    req.write(body);
+    req.end();
   });
 }
 
-// ======================================================
-// SEND MESSAGE
-// ======================================================
-
-async function sendMessage(chatId, text, replyMarkup = null) {
-  const data = {
+async function sendMessage(chatId, text, extra = {}) {
+  return telegram("sendMessage", {
     chat_id: chatId,
-    text
-  };
-
-  if (replyMarkup) {
-    data.reply_markup = replyMarkup;
-  }
-
-  return telegram("sendMessage", data);
+    text,
+    ...extra
+  });
 }
 
-// ======================================================
-// MAIN MENU
-// ======================================================
+async function answerCallback(callbackQueryId, text = "") {
+  try {
+    await telegram("answerCallbackQuery", {
+      callback_query_id: callbackQueryId,
+      text
+    });
+  } catch (err) {
+    console.error("Callback error:", err.message);
+  }
+}
+
+/* =========================
+   KEYBOARDS
+========================= */
 
 function mainKeyboard() {
   return {
@@ -145,11 +144,21 @@ function mainKeyboard() {
   };
 }
 
-// ======================================================
-// DATABASE
-// ======================================================
+function cancelKeyboard() {
+  return {
+    keyboard: [
+      [{ text: "❌ Haqi" }]
+    ],
+    resize_keyboard: true
+  };
+}
 
-async function createTables() {
+/* =========================
+   DATABASE MIGRATION
+========================= */
+
+async function migrateDatabase() {
+  console.log("🔄 Database migration started...");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -161,6 +170,41 @@ async function createTables() {
     )
   `);
 
+  /*
+   Existing users table keessatti id default yoo hin jirre
+   sequence sirreessa.
+  */
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'users'
+        AND column_name = 'id'
+        AND column_default IS NULL
+      ) THEN
+
+        CREATE SEQUENCE IF NOT EXISTS users_id_seq;
+
+        PERFORM setval(
+          'users_id_seq',
+          COALESCE((SELECT MAX(id) FROM users), 0) + 1,
+          false
+        );
+
+        ALTER TABLE users
+        ALTER COLUMN id
+        SET DEFAULT nextval('users_id_seq');
+
+        ALTER SEQUENCE users_id_seq
+        OWNED BY users.id;
+
+      END IF;
+    END
+    $$;
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS exams (
       id SERIAL PRIMARY KEY,
@@ -169,10 +213,30 @@ async function createTables() {
       subject TEXT,
       duration INTEGER DEFAULT 30,
       teacher_id BIGINT,
-      starts_at TIMESTAMP,
+      creator_id BIGINT NOT NULL,
+      starts_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       ends_at TIMESTAMP,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+
+  /*
+   Existing exams table yoo creator_id hin qabne dabala.
+  */
+  await pool.query(`
+    ALTER TABLE exams
+    ADD COLUMN IF NOT EXISTS creator_id BIGINT
+  `);
+
+  /*
+   Existing exams keessatti creator_id NULL yoo jiraate,
+   teacher_id irraa guuta.
+  */
+  await pool.query(`
+    UPDATE exams
+    SET creator_id = teacher_id
+    WHERE creator_id IS NULL
+    AND teacher_id IS NOT NULL
   `);
 
   await pool.query(`
@@ -218,113 +282,62 @@ async function createTables() {
       is_correct BOOLEAN DEFAULT FALSE
     )
   `);
-}
 
-// ======================================================
-// MIGRATIONS
-// ======================================================
-
-async function migrations() {
-
-  console.log("🔧 Database migrations started...");
-
-  await pool.query(`
-    ALTER TABLE exams
-    ADD COLUMN IF NOT EXISTS teacher_id BIGINT
-  `);
-
+  /*
+   Duration yoo hin jirre
+  */
   await pool.query(`
     ALTER TABLE exams
     ADD COLUMN IF NOT EXISTS duration INTEGER DEFAULT 30
   `);
 
+  /*
+   Teacher ID yoo hin jirre
+  */
   await pool.query(`
     ALTER TABLE exams
-    ADD COLUMN IF NOT EXISTS starts_at TIMESTAMP
+    ADD COLUMN IF NOT EXISTS teacher_id BIGINT
   `);
 
-  await pool.query(`
-    ALTER TABLE exams
-    ADD COLUMN IF NOT EXISTS ends_at TIMESTAMP
-  `);
+  /*
+   Creator ID irratti NOT NULL yoo jiraate,
+   INSERT keessatti yeroo hunda guutama.
+  */
 
-  await pool.query(`
-    ALTER TABLE attempts
-    ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP
-  `);
-
-  // users.id default fix
-  await pool.query(`
-    DO $$
-    BEGIN
-      IF EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_name = 'users'
-        AND column_name = 'id'
-        AND column_default IS NULL
-      ) THEN
-
-        CREATE SEQUENCE IF NOT EXISTS users_id_seq;
-
-        PERFORM setval(
-          'users_id_seq',
-          COALESCE((SELECT MAX(id) FROM users), 0) + 1,
-          false
-        );
-
-        ALTER TABLE users
-        ALTER COLUMN id
-        SET DEFAULT nextval('users_id_seq');
-
-        ALTER SEQUENCE users_id_seq
-        OWNED BY users.id;
-
-      END IF;
-    END
-    $$
-  `);
-
-  console.log("✅ Database migrations completed.");
+  console.log("✅ Database migration completed.");
 }
 
-async function initDatabase() {
-  await createTables();
-  await migrations();
-  console.log("✅ Database initialized.");
-}
+/* =========================
+   SAVE USER
+========================= */
 
-// ======================================================
-// SAVE USER
-// ======================================================
+async function saveUser(user) {
+  if (!user || !user.id) return;
 
-async function saveUser(msg) {
-
-  if (!msg.from) return;
-
-  await pool.query(`
+  await pool.query(
+    `
     INSERT INTO users
       (telegram_id, first_name, username)
     VALUES
       ($1, $2, $3)
-
     ON CONFLICT (telegram_id)
     DO UPDATE SET
       first_name = EXCLUDED.first_name,
       username = EXCLUDED.username
-  `, [
-    msg.from.id,
-    msg.from.first_name || "",
-    msg.from.username || ""
-  ]);
+    `,
+    [
+      user.id,
+      user.first_name || "",
+      user.username || ""
+    ]
+  );
 }
 
-// ======================================================
-// EXAM CODE
-// ======================================================
+/* =========================
+   RANDOM EXAM CODE
+========================= */
 
 function generateExamCode() {
-
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
   let code = "";
@@ -336,90 +349,114 @@ function generateExamCode() {
   return code;
 }
 
-// ======================================================
-// CREATE EXAM START
-// ======================================================
+/* =========================
+   START
+========================= */
+
+async function handleStart(msg) {
+  const chatId = msg.chat.id;
+
+  await saveUser(msg.from);
+
+  sessions.delete(chatId);
+
+  await sendMessage(
+    chatId,
+    `👋 Baga nagaan dhuftan gara Waamara!
+
+📚 Waamara Bot
+
+Tajaajiloota:
+📝 Qormaata uumuu
+📖 Qormaata fudhachuu
+📊 Qabxii ilaalu
+👨‍🏫 Qormaata kee ilaalu
+📚 Barnoota
+👤 Profile
+
+👇 Mee filannoo keessaa tokko filadhu.`,
+    {
+      reply_markup: mainKeyboard()
+    }
+  );
+}
+
+/* =========================
+   CREATE EXAM
+========================= */
 
 async function startCreateExam(chatId) {
-
   sessions.set(chatId, {
-    type: "create_exam",
-    step: "title"
+    step: "exam_title"
   });
 
   await sendMessage(
     chatId,
-
-    "📝 QORMAATA UUMI\n\n" +
-    "Mata-duree qormaataa barreessi.\n\n" +
-    "Fakkeenya:\n" +
-    "Qormaata Herregaa Kutaa 10"
+    "📝 MAQAA QORMAATAA\n\nMaqaa qormaataa galchi.\n\nFakkeenya:\nQormaata Herregaa Kutaa 8",
+    {
+      reply_markup: cancelKeyboard()
+    }
   );
 }
 
-// ======================================================
-// CREATE EXAM
-// ======================================================
-
-async function processCreateExam(chatId, text, msg) {
-
+async function processCreateExam(chatId, msg, text) {
   const s = sessions.get(chatId);
 
-  if (!s) return;
+  if (!s) return false;
 
-  // TITLE
-  if (s.step === "title") {
-
-    if (text.trim().length < 2) {
-      await sendMessage(
-        chatId,
-        "❌ Maaloo mata-duree sirrii barreessi."
-      );
-      return;
+  if (s.step === "exam_title") {
+    if (text.length < 2) {
+      await sendMessage(chatId, "❌ Maqaan qormaataa gabaabaa dha.");
+      return true;
     }
 
-    s.title = text.trim();
-    s.step = "subject";
+    s.title = text;
+    s.step = "exam_subject";
 
     await sendMessage(
       chatId,
-      "📚 Barnoota qormaataa barreessi.\n\n" +
-      "Fakkeenya: Herrega"
+      "📚 BARNOOTA\n\nMaqaa barnootaa galchi.\n\nFakkeenya:\nHerrega",
+      {
+        reply_markup: cancelKeyboard()
+      }
     );
 
-    return;
+    return true;
   }
 
-  // SUBJECT
-  if (s.step === "subject") {
-
-    s.subject = text.trim();
-    s.step = "duration";
+  if (s.step === "exam_subject") {
+    s.subject = text;
+    s.step = "exam_duration";
 
     await sendMessage(
       chatId,
-
-      "⏱️ Yeroo qormaataa meeqa daqiiqaa?\n\n" +
-      "Lakkoofsa qofa galchi.\n\n" +
-      "Fakkeenya:\n" +
-      "30"
+      "⏱️ YEROO QORMAATAA\n\n" +
+      "Daqiiqaa meeqa akka turu galchi.\n\n" +
+      "1 hanga 1440 galchi.\n\n" +
+      "Fakkeenya: 30",
+      {
+        reply_markup: cancelKeyboard()
+      }
     );
 
-    return;
+    return true;
   }
 
-  // DURATION
-  if (s.step === "duration") {
+  if (s.step === "exam_duration") {
 
-    // Lakkoofsa qofa fudhata
+    /*
+      Lakkoofsa qofa keessaa baasa.
+      Fakkeenya:
+      30
+      30 daqiiqaa
+      daqiiqaa 30
+    */
+
     const cleanText = String(text)
       .trim()
       .replace(/[^\d]/g, "");
 
-    const duration = parseInt(
-      cleanText,
-      10
-    );
+    const duration = parseInt(cleanText, 10);
 
     if (
       !cleanText ||
@@ -427,1306 +464,1639 @@ async function processCreateExam(chatId, text, msg) {
       duration < 1 ||
       duration > 1440
     ) {
-
       await sendMessage(
         chatId,
-
         "❌ Yeroon sirrii miti.\n\n" +
         "Lakkoofsa daqiiqaa 1 hanga 1440 galchi.\n\n" +
         "Fakkeenya: 30"
       );
 
-      return;
+      return true;
     }
 
     const code = generateExamCode();
 
-    const result = await pool.query(`
-      INSERT INTO exams
+    try {
+      const result = await pool.query(
+        `
+        INSERT INTO exams
         (
           code,
           title,
           subject,
           duration,
           teacher_id,
+          creator_id,
           starts_at,
           ends_at
         )
-
-      VALUES
+        VALUES
         (
           $1,
           $2,
           $3,
           $4,
           $5,
+          $5,
           CURRENT_TIMESTAMP,
           NULL
         )
+        RETURNING id, code
+        `,
+        [
+          code,
+          s.title,
+          s.subject,
+          duration,
+          msg.from.id
+        ]
+      );
 
-      RETURNING *
-    `, [
-      code,
-      s.title,
-      s.subject,
-      duration,
-      msg.from.id
-    ]);
+      const exam = result.rows[0];
 
-    const exam = result.rows[0];
+      s.examId = exam.id;
+      s.examCode = exam.code;
+      s.duration = duration;
+      s.step = "question_text";
 
-    s.type = "add_questions";
-    s.examId = exam.id;
-    s.examCode = exam.code;
-    s.questionNumber = 1;
-    s.step = "question";
+      await sendMessage(
+        chatId,
+        `✅ QORMAANNI UUMAMEERA!
 
-    await sendMessage(
-      chatId,
+📌 Maqaa: ${s.title}
+📚 Barnoota: ${s.subject}
+⏱️ Yeroo: ${duration} daqiiqaa
+🔑 Code: ${exam.code}
 
-      "✅ QORMAATA UUMAMEERA!\n\n" +
-      `📚 ${exam.title}\n` +
-      `📖 ${exam.subject}\n` +
-      `⏱️ ${exam.duration} daqiiqaa\n` +
-      `🔑 Koodii: ${exam.code}\n\n` +
+Amma gaaffii 1ffaa galchi.`,
+        {
+          reply_markup: cancelKeyboard()
+        }
+      );
 
-      "Amma gaaffii jalqabaa itti daballa.\n\n" +
+      await sendMessage(
+        chatId,
+        "❓ GAAFFII 1FFAA\n\nGaaffii barreessi."
+      );
 
-      "📝 GAaffii #1 barreessi:"
-    );
+    } catch (err) {
+      console.error("❌ Exam create error:", err);
 
-    return;
+      await sendMessage(
+        chatId,
+        "❌ Qormaata uumuu irratti dogongorri uumame.\n\n" +
+        "Mee irra deebi'i."
+      );
+    }
+
+    return true;
   }
+
+  return false;
 }
 
-// ======================================================
-// ADD QUESTIONS
-// ======================================================
+/* =========================
+   ADD QUESTIONS
+========================= */
 
-async function processAddQuestion(chatId, text) {
-
+async function processQuestion(chatId, msg, text) {
   const s = sessions.get(chatId);
 
-  if (!s || s.type !== "add_questions") {
-    return;
-  }
+  if (!s) return false;
 
-  // QUESTION
-  if (s.step === "question") {
+  if (s.step === "question_text") {
 
-    s.questionText = text.trim();
-    s.step = "optionA";
+    s.question = text;
+    s.step = "option_a";
 
     await sendMessage(
       chatId,
-      "🅰️ Deebii A barreessi:"
+      "🅰️ Filannoo A galchi."
     );
 
-    return;
+    return true;
   }
 
-  // OPTION A
-  if (s.step === "optionA") {
+  if (s.step === "option_a") {
 
-    s.optionA = text.trim();
-    s.step = "optionB";
+    s.options = {
+      A: text
+    };
+
+    s.step = "option_b";
 
     await sendMessage(
       chatId,
-      "🅱️ Deebii B barreessi:"
+      "🅱️ Filannoo B galchi."
     );
 
-    return;
+    return true;
   }
 
-  // OPTION B
-  if (s.step === "optionB") {
+  if (s.step === "option_b") {
 
-    s.optionB = text.trim();
-    s.step = "optionC";
+    s.options.B = text;
+    s.step = "option_c";
 
     await sendMessage(
       chatId,
-      "©️ Deebii C barreessi:"
+      "©️ Filannoo C galchi."
     );
 
-    return;
+    return true;
   }
 
-  // OPTION C
-  if (s.step === "optionC") {
+  if (s.step === "option_c") {
 
-    s.optionC = text.trim();
-    s.step = "optionD";
+    s.options.C = text;
+    s.step = "option_d";
 
     await sendMessage(
       chatId,
-      "🅳 Deebii D barreessi:"
+      "🆔 Filannoo D galchi."
     );
 
-    return;
+    return true;
   }
 
-  // OPTION D
-  if (s.step === "optionD") {
+  if (s.step === "option_d") {
 
-    s.optionD = text.trim();
-    s.step = "correct";
+    s.options.D = text;
+    s.step = "correct_answer";
 
     await sendMessage(
       chatId,
-
       "✅ Deebii sirrii kam?\n\n" +
-      "A, B, C ykn D qofa barreessi."
+      "A, B, C ykn D qofa barreessi.\n\n" +
+      "Fakkeenya: B"
     );
 
-    return;
+    return true;
   }
 
-  // CORRECT
-  if (s.step === "correct") {
+  if (s.step === "correct_answer") {
 
-    const correct =
-      text.trim().toUpperCase();
+    const correct = text.trim().toUpperCase();
 
     if (!["A", "B", "C", "D"].includes(correct)) {
 
       await sendMessage(
         chatId,
-
         "❌ Deebiin sirrii miti.\n\n" +
-        "A, B, C ykn D qofa barreessi."
+        "A, B, C ykn D qofa galchi."
       );
 
-      return;
+      return true;
     }
 
-    s.correct = correct;
-    s.step = "points";
+    s.correctAnswer = correct;
+    s.step = "question_points";
 
     await sendMessage(
       chatId,
-
-      "🎯 Qabxii gaaffii kanaa meeqa?\n\n" +
+      "🎯 QABXII\n\n" +
+      "Gaaffiin kun qabxii meeqa qaba?\n\n" +
       "Fakkeenya: 1"
     );
 
-    return;
+    return true;
   }
 
-  // POINTS
-  if (s.step === "points") {
+  if (s.step === "question_points") {
 
-    const points =
-      parseInt(
-        String(text).trim(),
-        10
-      );
+    const points = parseInt(
+      String(text).trim().replace(/[^\d]/g, ""),
+      10
+    );
 
     if (
       Number.isNaN(points) ||
       points < 1 ||
       points > 100
     ) {
-
       await sendMessage(
         chatId,
-
         "❌ Qabxiin sirrii miti.\n\n" +
-        "Lakkoofsa 1 hanga 100 galchi.\n\n" +
+        "1 hanga 100 galchi.\n\n" +
         "Fakkeenya: 1"
       );
 
-      return;
+      return true;
     }
 
-    // STORE CORRECT ANSWER AS TEXT
-    let correctText = "";
+    try {
 
-    if (s.correct === "A") correctText = s.optionA;
-    if (s.correct === "B") correctText = s.optionB;
-    if (s.correct === "C") correctText = s.optionC;
-    if (s.correct === "D") correctText = s.optionD;
+      const correctText =
+        s.options[s.correctAnswer];
 
-    // INSERT QUESTION
-    const questionResult = await pool.query(`
-      INSERT INTO questions
+      const questionResult = await pool.query(
+        `
+        INSERT INTO questions
         (
           exam_id,
           question_text,
           correct_answer,
           points
         )
-
-      VALUES
+        VALUES
         ($1, $2, $3, $4)
+        RETURNING id
+        `,
+        [
+          s.examId,
+          s.question,
+          correctText,
+          points
+        ]
+      );
 
-      RETURNING id
-    `, [
-      s.examId,
-      s.questionText,
-      correctText,
-      points
-    ]);
+      const questionId =
+        questionResult.rows[0].id;
 
-    const questionId =
-      questionResult.rows[0].id;
+      for (const key of ["A", "B", "C", "D"]) {
 
-    // INSERT OPTIONS
-    await pool.query(`
-      INSERT INTO options
-        (
-          question_id,
-          option_key,
-          option_text
-        )
+        await pool.query(
+          `
+          INSERT INTO options
+          (
+            question_id,
+            option_key,
+            option_text
+          )
+          VALUES
+          ($1, $2, $3)
+          `,
+          [
+            questionId,
+            key,
+            s.options[key]
+          ]
+        );
+      }
 
-      VALUES
-        ($1, 'A', $2),
-        ($1, 'B', $3),
-        ($1, 'C', $4),
-        ($1, 'D', $5)
-    `, [
-      questionId,
-      s.optionA,
-      s.optionB,
-      s.optionC,
-      s.optionD
-    ]);
-
-    await sendMessage(
-      chatId,
-
-      `✅ Gaaffii #${s.questionNumber} galmaa'e.\n\n` +
-
-      "Maaliif itti aanu?\n\n" +
-
-      "➕ Gaaffii biraa dabali → `E`\n" +
-      "🏁 Qormaata xumuri → `X`"
-    );
-
-    s.step = "next";
-
-    return;
-  }
-
-  // NEXT
-  if (s.step === "next") {
-
-    const command =
-      text.trim().toUpperCase();
-
-    if (command === "E") {
-
-      s.questionNumber++;
-      s.step = "question";
+      s.step = "next_question";
 
       await sendMessage(
         chatId,
+        `✅ Gaaffiin galmaa'e!
 
-        `📝 GAAFFII #${s.questionNumber}\n\n` +
-        "Gaaffii barreessi:"
+❓ ${s.question}
+
+🅰️ ${s.options.A}
+🅱️ ${s.options.B}
+©️ ${s.options.C}
+🆔 ${s.options.D}
+
+✅ Deebii: ${s.correctAnswer}
+🎯 Qabxii: ${points}
+
+Gaaffii biraa dabaluuf:
+➡️ E barreessi
+
+Qormaata xumuruuf:
+➡️ X barreessi`,
+        {
+          reply_markup: cancelKeyboard()
+        }
       );
 
-      return;
+    } catch (err) {
+
+      console.error(
+        "❌ Question insert error:",
+        err
+      );
+
+      await sendMessage(
+        chatId,
+        "❌ Gaaffii galchuu irratti dogongorri uumame."
+      );
     }
 
+    return true;
+  }
+
+  if (s.step === "next_question") {
+
+    const command = text.trim().toUpperCase();
+
     if (command === "X") {
-
-      const result = await pool.query(`
-        SELECT COUNT(*) AS total
-        FROM questions
-        WHERE exam_id = $1
-      `, [s.examId]);
-
-      const total =
-        Number(result.rows[0].total);
 
       sessions.delete(chatId);
 
       await sendMessage(
         chatId,
+        `🎉 QORMAANNI XUMURAME!
 
-        "🎉 QORMAATA XUMURAMEERA!\n\n" +
+🔑 Code: ${s.examCode}
 
-        `📚 Mata-duree: ${s.title || ""}\n` +
-        `🔢 Gaaffiiwwan: ${total}\n` +
-        `🔑 Koodii: ${s.examCode}\n\n` +
+📌 Maqaa: ${s.title}
+📚 Barnoota: ${s.subject}
+⏱️ Yeroo: ${s.duration} daqiiqaa
 
-        "📢 Barattootaaf koodii kana kenni.\n\n" +
+Barattoonni qormaata fudhachuuf:
 
-        `🔑 ${s.examCode}`,
+📖 Qormaata Fudhadhu
 
-        mainKeyboard()
+filadhuutii code kana galchi:
+
+${s.examCode}`,
+        {
+          reply_markup: mainKeyboard()
+        }
       );
 
-      return;
+      return true;
+    }
+
+    if (command === "E") {
+
+      s.step = "question_text";
+
+      await sendMessage(
+        chatId,
+        "❓ GAAFFII HAARAA\n\nGaaffii itti aanu barreessi."
+      );
+
+      return true;
     }
 
     await sendMessage(
       chatId,
-
-      "❌ Ajaja sirrii miti.\n\n" +
-      "➕ Gaaffii biraa: E\n" +
-      "🏁 Qormaata xumuruuf: X"
+      "➡️ Gaaffii biraa dabaluuf E barreessi.\n\n" +
+      "➡️ Qormaata xumuruuf X barreessi."
     );
 
-    return;
+    return true;
   }
+
+  return false;
 }
 
-// ======================================================
-// TAKE EXAM
-// ======================================================
+/* =========================
+   TAKE EXAM
+========================= */
 
 async function startTakeExam(chatId) {
 
   sessions.set(chatId, {
-    type: "take_exam",
-    step: "code"
+    step: "exam_code"
   });
 
   await sendMessage(
     chatId,
-
     "📖 QORMAATA FUDHADHU\n\n" +
-    "🔑 Koodii qormaataa galchi.\n\n" +
-    "Fakkeenya: ABC123"
+    "Code qormaataa galchi.\n\n" +
+    "Fakkeenya: ABC123",
+    {
+      reply_markup: cancelKeyboard()
+    }
   );
 }
 
-// ======================================================
-// TAKE EXAM PROCESS
-// ======================================================
+async function startExamByCode(chatId, msg, text) {
 
-async function processTakeExam(chatId, text, msg) {
+  const code = text.trim().toUpperCase();
 
-  const s = sessions.get(chatId);
+  try {
 
-  if (!s) return;
-
-  const code =
-    text.trim().toUpperCase();
-
-  const result = await pool.query(`
-    SELECT *
-    FROM exams
-    WHERE code = $1
-  `, [code]);
-
-  if (result.rows.length === 0) {
-
-    await sendMessage(
-      chatId,
-      "❌ Koodii qormaataa kanaan qormaata hin argamne."
+    const examResult = await pool.query(
+      `
+      SELECT *
+      FROM exams
+      WHERE UPPER(code) = $1
+      LIMIT 1
+      `,
+      [code]
     );
 
-    return;
-  }
+    if (examResult.rows.length === 0) {
 
-  const exam =
-    result.rows[0];
+      await sendMessage(
+        chatId,
+        "❌ Qormaata kana hin argamne.\n\n" +
+        "Code sirrii galchi."
+      );
 
-  const questionsResult = await pool.query(`
-    SELECT
-      id,
-      question_text,
-      correct_answer,
-      points
-    FROM questions
-    WHERE exam_id = $1
-    ORDER BY id
-  `, [exam.id]);
+      return true;
+    }
 
-  const questions =
-    questionsResult.rows;
+    const exam = examResult.rows[0];
 
-  if (questions.length === 0) {
-
-    sessions.delete(chatId);
-
-    await sendMessage(
-      chatId,
-
-      "⚠️ Qormaanni kun gaaffii hin qabu."
+    const questionsResult = await pool.query(
+      `
+      SELECT *
+      FROM questions
+      WHERE exam_id = $1
+      ORDER BY id ASC
+      `,
+      [exam.id]
     );
 
-    return;
-  }
+    if (questionsResult.rows.length === 0) {
 
-  const attemptResult = await pool.query(`
-    INSERT INTO attempts
+      await sendMessage(
+        chatId,
+        "❌ Qormaanni kun gaaffii hin qabu."
+      );
+
+      sessions.delete(chatId);
+
+      return true;
+    }
+
+    const expiresAt =
+      new Date(
+        Date.now() +
+        Number(exam.duration || 30) * 60 * 1000
+      );
+
+    const attemptResult = await pool.query(
+      `
+      INSERT INTO attempts
       (
         exam_id,
         student_id,
         student_name,
+        score,
         total,
+        percentage,
+        started_at,
         expires_at
       )
-
-    VALUES
+      VALUES
       (
         $1,
         $2,
         $3,
+        0,
         $4,
-        CURRENT_TIMESTAMP +
-          ($5 * INTERVAL '1 minute')
+        0,
+        CURRENT_TIMESTAMP,
+        $5
       )
-
-    RETURNING id, expires_at
-  `, [
-    exam.id,
-    msg.from.id,
-    msg.from.first_name || "Barataa",
-    questions.length,
-    exam.duration
-  ]);
-
-  const attempt =
-    attemptResult.rows[0];
-
-  sessions.set(chatId, {
-    type: "answer_exam",
-    examId: exam.id,
-    attemptId: attempt.id,
-    questions,
-    index: 0,
-    expiresAt:
-      new Date(attempt.expires_at).getTime()
-  });
-
-  await sendMessage(
-    chatId,
-
-    "✅ QORMAATA JALQABDEETTA!\n\n" +
-
-    `📚 ${exam.title}\n` +
-    `📖 ${exam.subject || "-"}\n` +
-    `📝 Gaaffii: ${questions.length}\n` +
-    `⏱️ Yeroo: ${exam.duration} daqiiqaa\n\n` +
-
-    "⏳ Yeroon kee amma irraa eegala."
-  );
-
-  await sendQuestion(chatId);
-}
-
-// ======================================================
-// QUESTION KEYBOARD
-// ======================================================
-
-function answerKeyboard(options) {
-
-  return {
-    inline_keyboard:
-      options.map(o => [
-        {
-          text:
-            `${o.option_key}. ${o.option_text}`,
-          callback_data:
-            `ans:${o.option_key}`
-        }
-      ])
-  };
-}
-
-// ======================================================
-// SEND QUESTION
-// ======================================================
-
-async function sendQuestion(chatId) {
-
-  const s =
-    sessions.get(chatId);
-
-  if (!s) return;
-
-  if (
-    Date.now() >= s.expiresAt
-  ) {
-
-    await finishAttempt(
-      chatId,
-      s,
-      true
+      RETURNING id
+      `,
+      [
+        exam.id,
+        msg.from.id,
+        msg.from.first_name || "Barataa",
+        questionsResult.rows.length,
+        expiresAt
+      ]
     );
 
-    return;
-  }
+    const attemptId =
+      attemptResult.rows[0].id;
 
-  if (
-    s.index >= s.questions.length
-  ) {
-
-    await finishAttempt(
-      chatId,
-      s,
-      false
-    );
-
-    return;
-  }
-
-  const q =
-    s.questions[s.index];
-
-  const optionResult =
-    await pool.query(`
-      SELECT
-        option_key,
-        option_text
-      FROM options
-      WHERE question_id = $1
-      ORDER BY option_key
-    `, [q.id]);
-
-  const options =
-    optionResult.rows;
-
-  const remaining =
-    Math.max(
-      0,
-      s.expiresAt - Date.now()
-    );
-
-  const minutes =
-    Math.floor(
-      remaining / 60000
-    );
-
-  const seconds =
-    Math.floor(
-      (remaining % 60000) / 1000
-    );
-
-  const timer =
-    `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-
-  let message =
-    `📝 GAAFFII ${s.index + 1}/${s.questions.length}\n\n`;
-
-  message +=
-    `⏱️ Yeroo hafe: ${timer}\n\n`;
-
-  message +=
-    `${q.question_text}\n\n`;
-
-  for (const o of options) {
-
-    message +=
-      `${o.option_key}. ${o.option_text}\n`;
-  }
-
-  message +=
-    "\n👇 Deebii kee filadhu.";
-
-  await sendMessage(
-    chatId,
-    message,
-    answerKeyboard(options)
-  );
-}
-
-// ======================================================
-// ANSWER
-// ======================================================
-
-async function processAnswer(
-  chatId,
-  answer
-) {
-
-  const s =
-    sessions.get(chatId);
-
-  if (!s) return;
-
-  if (
-    Date.now() >= s.expiresAt
-  ) {
-
-    await finishAttempt(
-      chatId,
-      s,
-      true
-    );
-
-    return;
-  }
-
-  const q =
-    s.questions[s.index];
-
-  if (!q) {
-
-    await finishAttempt(
-      chatId,
-      s,
-      false
-    );
-
-    return;
-  }
-
-  const selected =
-    String(answer)
-      .trim()
-      .toUpperCase();
-
-  const optionResult =
-    await pool.query(`
-      SELECT option_text
-      FROM options
-      WHERE question_id = $1
-      AND option_key = $2
-    `, [
-      q.id,
-      selected
-    ]);
-
-  if (optionResult.rows.length === 0) {
+    sessions.set(chatId, {
+      step: "taking_exam",
+      examId: exam.id,
+      examCode: exam.code,
+      examTitle: exam.title,
+      duration: Number(exam.duration || 30),
+      attemptId,
+      questions: questionsResult.rows,
+      questionIndex: 0,
+      answers: {}
+    });
 
     await sendMessage(
       chatId,
-      "❌ Deebii sirrii filadhu."
+      `📝 QORMAATA JALQABSIISI!
+
+📌 ${exam.title}
+📚 ${exam.subject || ""}
+⏱️ Yeroo: ${exam.duration} daqiiqaa
+❓ Gaaffiiwwan: ${questionsResult.rows.length}
+
+⏳ Yeroon ati qormaata jalqabde irraa eegala.
+
+Mee gaaffii 1ffaa deebisi.`
     );
 
+    await sendExamQuestion(chatId);
+
+    return true;
+
+  } catch (err) {
+
+    console.error(
+      "❌ Start exam error:",
+      err
+    );
+
+    await sendMessage(
+      chatId,
+      "❌ Qormaata jalqabuu irratti dogongorri uumame."
+    );
+
+    return true;
+  }
+}
+
+/* =========================
+   SEND QUESTION
+========================= */
+
+async function sendExamQuestion(chatId) {
+
+  const s = sessions.get(chatId);
+
+  if (!s || s.step !== "taking_exam") {
+    return;
+  }
+
+  /*
+   Timer check
+  */
+
+  const attemptResult = await pool.query(
+    `
+    SELECT expires_at
+    FROM attempts
+    WHERE id = $1
+    `,
+    [s.attemptId]
+  );
+
+  if (attemptResult.rows.length === 0) {
+    sessions.delete(chatId);
+    return;
+  }
+
+  const expiresAt =
+    new Date(attemptResult.rows[0].expires_at);
+
+  if (Date.now() >= expiresAt.getTime()) {
+
+    await finishExam(
+      chatId,
+      "⏰ Yeroon qormaataa xumurame."
+    );
+
+    return;
+  }
+
+  if (
+    s.questionIndex >=
+    s.questions.length
+  ) {
+
+    await finishExam(
+      chatId,
+      "🎉 Qormaata xumurte."
+    );
+
+    return;
+  }
+
+  const question =
+    s.questions[s.questionIndex];
+
+  const optionsResult = await pool.query(
+    `
+    SELECT option_key, option_text
+    FROM options
+    WHERE question_id = $1
+    ORDER BY id ASC
+    `,
+    [question.id]
+  );
+
+  const keyboard =
+    optionsResult.rows.map((o) => [
+      {
+        text: `${o.option_key}. ${o.option_text}`,
+        callback_data:
+          `answer_${question.id}_${o.option_key}`
+      }
+    ]);
+
+  await sendMessage(
+    chatId,
+    `❓ Gaaffii ${s.questionIndex + 1}/${s.questions.length}
+
+${question.question_text}
+
+Filannoo keessaa deebii sirrii filadhu.`,
+    {
+      reply_markup: {
+        inline_keyboard: keyboard
+      }
+    }
+  );
+}
+
+/* =========================
+   ANSWER
+========================= */
+
+async function processAnswer(
+  callbackQuery,
+  questionId,
+  answerKey
+) {
+
+  const chatId =
+    callbackQuery.message.chat.id;
+
+  const s = sessions.get(chatId);
+
+  await answerCallback(
+    callbackQuery.id
+  );
+
+  if (
+    !s ||
+    s.step !== "taking_exam"
+  ) {
+
+    await sendMessage(
+      chatId,
+      "❌ Qormaanni kun hin jirre."
+    );
+
+    return;
+  }
+
+  const attemptResult = await pool.query(
+    `
+    SELECT expires_at
+    FROM attempts
+    WHERE id = $1
+    `,
+    [s.attemptId]
+  );
+
+  if (attemptResult.rows.length === 0) {
+    return;
+  }
+
+  const expiresAt =
+    new Date(
+      attemptResult.rows[0].expires_at
+    );
+
+  if (Date.now() >= expiresAt.getTime()) {
+
+    await finishExam(
+      chatId,
+      "⏰ Yeroon qormaataa xumurame."
+    );
+
+    return;
+  }
+
+  const questionResult = await pool.query(
+    `
+    SELECT *
+    FROM questions
+    WHERE id = $1
+    `,
+    [questionId]
+  );
+
+  if (questionResult.rows.length === 0) {
+    return;
+  }
+
+  const question =
+    questionResult.rows[0];
+
+  const optionResult = await pool.query(
+    `
+    SELECT *
+    FROM options
+    WHERE question_id = $1
+    AND option_key = $2
+    LIMIT 1
+    `,
+    [
+      questionId,
+      answerKey
+    ]
+  );
+
+  if (optionResult.rows.length === 0) {
     return;
   }
 
   const selectedText =
     optionResult.rows[0].option_text;
 
-  const correct =
-    selectedText.trim().toLowerCase() ===
-    q.correct_answer.trim().toLowerCase();
+  const isCorrect =
+    selectedText ===
+    question.correct_answer;
 
-  await pool.query(`
+  await pool.query(
+    `
     INSERT INTO answers
-      (
-        attempt_id,
-        question_id,
-        answer,
-        is_correct
-      )
-
+    (
+      attempt_id,
+      question_id,
+      answer,
+      is_correct
+    )
     VALUES
-      ($1, $2, $3, $4)
-  `, [
-    s.attemptId,
-    q.id,
-    selected,
-    correct
-  ]);
+    ($1, $2, $3, $4)
+    `,
+    [
+      s.attemptId,
+      questionId,
+      selectedText,
+      isCorrect
+    ]
+  );
 
-  if (correct) {
-
-    await sendMessage(
-      chatId,
-      "✅ Sirrii!"
-    );
-
+  if (isCorrect) {
+    s.answers[questionId] =
+      question.points;
   } else {
-
-    await sendMessage(
-      chatId,
-      "❌ Dogoggora."
-    );
+    s.answers[questionId] = 0;
   }
 
-  s.index++;
+  await sendMessage(
+    chatId,
+    isCorrect
+      ? "✅ Deebiin kee sirrii dha!"
+      : "❌ Deebiin kee sirrii miti."
+  );
 
-  if (
-    s.index >= s.questions.length
-  ) {
+  s.questionIndex++;
 
-    await finishAttempt(
-      chatId,
-      s,
-      false
-    );
-
-    return;
-  }
-
-  await sendQuestion(chatId);
+  await sendExamQuestion(chatId);
 }
 
-// ======================================================
-// FINISH
-// ======================================================
+/* =========================
+   FINISH EXAM
+========================= */
 
-async function finishAttempt(
+async function finishExam(
   chatId,
-  s,
-  expired
+  message
 ) {
+
+  const s = sessions.get(chatId);
+
+  if (!s) return;
 
   try {
 
-    const result =
-      await pool.query(`
-        SELECT
-          COUNT(*) FILTER (
-            WHERE is_correct = TRUE
-          ) AS correct
-        FROM answers
-        WHERE attempt_id = $1
-      `, [
-        s.attemptId
-      ]);
+    const answersResult = await pool.query(
+      `
+      SELECT
+        a.is_correct,
+        q.points
+      FROM answers a
+      JOIN questions q
+        ON q.id = a.question_id
+      WHERE a.attempt_id = $1
+      `,
+      [s.attemptId]
+    );
 
-    const correct =
+    let score = 0;
+    let total = 0;
+
+    for (
+      const row of answersResult.rows
+    ) {
+
+      total +=
+        Number(row.points || 0);
+
+      if (row.is_correct) {
+        score +=
+          Number(row.points || 0);
+      }
+    }
+
+    /*
+      Total qabxii gaaffii hunda irraa
+    */
+
+    const totalResult = await pool.query(
+      `
+      SELECT COALESCE(
+        SUM(points),
+        0
+      ) AS total
+      FROM questions
+      WHERE exam_id = $1
+      `,
+      [s.examId]
+    );
+
+    total =
       Number(
-        result.rows[0].correct || 0
+        totalResult.rows[0].total || 0
       );
-
-    const total =
-      s.questions.length;
 
     const percentage =
       total > 0
-        ? (correct / total) * 100
+        ? (score / total) * 100
         : 0;
 
-    await pool.query(`
+    await pool.query(
+      `
       UPDATE attempts
-
       SET
         score = $1,
         total = $2,
         percentage = $3,
         finished_at = CURRENT_TIMESTAMP
-
       WHERE id = $4
-    `, [
-      correct,
-      total,
-      percentage.toFixed(2),
-      s.attemptId
-    ]);
-
-    sessions.delete(chatId);
-
-    if (expired) {
-
-      await sendMessage(
-        chatId,
-
-        "⏰ YEROON QORMAATAA DHUMEEERA!\n\n" +
-
-        `✅ Sirrii: ${correct}\n` +
-        `❌ Dogoggora: ${total - correct}\n` +
-        `📊 Qabxii: ${correct}/${total}\n` +
-        `📈 Dhibbeentaa: ${percentage.toFixed(2)}%`,
-
-        mainKeyboard()
-      );
-
-    } else {
-
-      await sendMessage(
-        chatId,
-
-        "🎉 QORMAATA XUMURTE!\n\n" +
-
-        `✅ Sirrii: ${correct}\n` +
-        `❌ Dogoggora: ${total - correct}\n` +
-        `📊 Qabxii: ${correct}/${total}\n` +
-        `📈 Dhibbeentaa: ${percentage.toFixed(2)}%`,
-
-        mainKeyboard()
-      );
-    }
-
-  } catch (e) {
-
-    console.error(
-      "Finish error:",
-      e
+      `,
+      [
+        score,
+        total,
+        percentage.toFixed(2),
+        s.attemptId
+      ]
     );
 
     sessions.delete(chatId);
 
     await sendMessage(
       chatId,
-      "❌ Qabxii galmeessuu irratti rakkoon uumame.",
-      mainKeyboard()
-    );
-  }
-}
+      `${message}
 
-// ======================================================
-// CALLBACK
-// ======================================================
+🎉 QORMAANNI XUMURAMEERA!
 
-async function handleCallback(callback) {
+📌 Qormaata: ${s.examTitle}
 
-  const chatId =
-    callback.message.chat.id;
+🏆 Qabxii: ${score}/${total}
+📊 Dhibbeentaa: ${percentage.toFixed(2)}%
 
-  const data =
-    callback.data || "";
-
-  try {
-
-    await telegram(
-      "answerCallbackQuery",
+Galmee kee keessatti kuufameera.`,
       {
-        callback_query_id:
-          callback.id
+        reply_markup: mainKeyboard()
       }
     );
 
-  } catch (e) {}
+  } catch (err) {
 
-  if (data.startsWith("ans:")) {
+    console.error(
+      "❌ Finish exam error:",
+      err
+    );
 
-    const answer =
-      data.substring(4);
+    sessions.delete(chatId);
 
-    await processAnswer(
+    await sendMessage(
       chatId,
-      answer
+      "❌ Qormaata xumuru irratti dogongorri uumame.",
+      {
+        reply_markup: mainKeyboard()
+      }
     );
   }
 }
 
-// ======================================================
-// SCORE
-// ======================================================
+/* =========================
+   MY SCORE
+========================= */
 
-async function showScores(
-  chatId,
-  msg
-) {
+async function showMyScores(chatId, userId) {
 
-  const result =
-    await pool.query(`
+  try {
+
+    const result = await pool.query(
+      `
       SELECT
-        e.title,
-        e.subject,
         a.score,
         a.total,
-        a.percentage
+        a.percentage,
+        a.finished_at,
+        e.title,
+        e.subject
       FROM attempts a
       JOIN exams e
         ON e.id = a.exam_id
       WHERE a.student_id = $1
-      AND a.finished_at IS NOT NULL
-      ORDER BY a.finished_at DESC
-      LIMIT 20
-    `, [
-      msg.from.id
-    ]);
+      ORDER BY a.id DESC
+      LIMIT 10
+      `,
+      [userId]
+    );
 
-  if (result.rows.length === 0) {
+    if (result.rows.length === 0) {
+
+      await sendMessage(
+        chatId,
+        "📊 Qabxiin ati argatte ammaaf hin jiru.",
+        {
+          reply_markup: mainKeyboard()
+        }
+      );
+
+      return;
+    }
+
+    let text =
+      "📊 QABXII KOO\n\n";
+
+    result.rows.forEach(
+      (row, index) => {
+
+        text +=
+          `${index + 1}. ${row.title}\n` +
+          `📚 ${row.subject || ""}\n` +
+          `🏆 ${row.score}/${row.total}\n` +
+          `📈 ${Number(row.percentage).toFixed(2)}%\n\n`;
+      }
+    );
 
     await sendMessage(
       chatId,
-      "📊 Qabxii kee ammaaf hin jiru.",
-      mainKeyboard()
+      text,
+      {
+        reply_markup: mainKeyboard()
+      }
     );
 
-    return;
+  } catch (err) {
+
+    console.error(
+      "❌ Score error:",
+      err
+    );
+
+    await sendMessage(
+      chatId,
+      "❌ Qabxii ilaalu irratti dogongorri uumame."
+    );
   }
-
-  let text =
-    "📊 QABXII KOO\n\n";
-
-  result.rows.forEach(
-    (r, i) => {
-
-      text +=
-        `${i + 1}. ${r.title}\n`;
-
-      text +=
-        `📚 ${r.subject || "-"}\n`;
-
-      text +=
-        `🎯 ${r.score}/${r.total}\n`;
-
-      text +=
-        `📈 ${Number(r.percentage).toFixed(2)}%\n\n`;
-    }
-  );
-
-  await sendMessage(
-    chatId,
-    text,
-    mainKeyboard()
-  );
 }
 
-// ======================================================
-// TEACHER EXAMS
-// ======================================================
+/* =========================
+   TEACHER EXAMS
+========================= */
 
-async function teacherExams(
+async function showTeacherExams(
   chatId,
-  msg
+  userId
+) {
+
+  try {
+
+    const result = await pool.query(
+      `
+      SELECT
+        id,
+        code,
+        title,
+        subject,
+        duration,
+        created_at
+      FROM exams
+      WHERE teacher_id = $1
+         OR creator_id = $1
+      ORDER BY id DESC
+      LIMIT 20
+      `,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+
+      await sendMessage(
+        chatId,
+        "👨‍🏫 Qormaata ati uumte hin jiru.",
+        {
+          reply_markup: mainKeyboard()
+        }
+      );
+
+      return;
+    }
+
+    let text =
+      "👨‍🏫 QORMAATA KOO\n\n";
+
+    result.rows.forEach(
+      (exam, index) => {
+
+        text +=
+          `${index + 1}. ${exam.title}\n` +
+          `📚 ${exam.subject || ""}\n` +
+          `🔑 Code: ${exam.code}\n` +
+          `⏱️ ${exam.duration} daqiiqaa\n\n`;
+      }
+    );
+
+    await sendMessage(
+      chatId,
+      text,
+      {
+        reply_markup: mainKeyboard()
+      }
+    );
+
+  } catch (err) {
+
+    console.error(
+      "❌ Teacher exams error:",
+      err
+    );
+
+    await sendMessage(
+      chatId,
+      "❌ Qormaata kee ilaalu irratti dogongorri uumame."
+    );
+  }
+}
+
+/* =========================
+   PROFILE
+========================= */
+
+async function showProfile(
+  chatId,
+  user
 ) {
 
   const result =
-    await pool.query(`
-      SELECT
-        e.id,
-        e.title,
-        e.subject,
-        e.code,
-        e.duration,
-        COUNT(q.id) AS questions
-      FROM exams e
-      LEFT JOIN questions q
-        ON q.exam_id = e.id
-      WHERE e.teacher_id = $1
-      GROUP BY e.id
-      ORDER BY e.created_at DESC
-      LIMIT 20
-    `, [
-      msg.from.id
-    ]);
-
-  if (result.rows.length === 0) {
-
-    await sendMessage(
-      chatId,
-      "👨‍🏫 Qormaata ati uumte hin jiru.",
-      mainKeyboard()
+    await pool.query(
+      `
+      SELECT *
+      FROM users
+      WHERE telegram_id = $1
+      LIMIT 1
+      `,
+      [user.id]
     );
 
-    return;
-  }
-
-  let text =
-    "👨‍🏫 QORMAATA KOO\n\n";
-
-  for (const e of result.rows) {
-
-    text +=
-      `📚 ${e.title}\n`;
-
-    text +=
-      `📖 ${e.subject || "-"}\n`;
-
-    text +=
-      `🔑 Koodii: ${e.code}\n`;
-
-    text +=
-      `📝 Gaaffii: ${e.questions}\n`;
-
-    text +=
-      `⏱️ Yeroo: ${e.duration} daqiiqaa\n\n`;
-  }
+  const dbUser =
+    result.rows[0];
 
   await sendMessage(
     chatId,
-    text,
-    mainKeyboard()
+    `👤 PROFILE
+
+👨 Maqaa: ${user.first_name || ""}
+🔹 Username: ${
+      user.username
+        ? "@" + user.username
+        : "Hin qabu"
+    }
+🆔 Telegram ID: ${user.id}
+
+📅 Galmee:
+${
+  dbUser?.created_at
+    ? new Date(
+        dbUser.created_at
+      ).toLocaleString()
+    : "-"
+}`,
+    {
+      reply_markup: mainKeyboard()
+    }
   );
 }
 
-// ======================================================
-// PROFILE
-// ======================================================
+/* =========================
+   LEARNING
+========================= */
 
-async function profile(
-  chatId,
-  msg
-) {
+async function showLearning(chatId) {
 
   await sendMessage(
     chatId,
+    `📚 BARNOOTA
 
-    "👤 PROFILE\n\n" +
+Waamara keessatti tajaajiloota barnootaa dabalataa:
 
-    `👤 Maqaa: ${msg.from.first_name || "-"}\n` +
-    `🔗 Username: @${msg.from.username || "-"}\n` +
-    `🆔 Telegram ID: ${msg.from.id}`,
+📖 Barnoota
+📝 Qormaata
+📊 Qabxii
+🎯 Shaakala
+❓ Gaaffii fi Deebii
 
-    mainKeyboard()
+Tajaajiloonni kun gara fuulduraatti ni bal'atu.`,
+    {
+      reply_markup: mainKeyboard()
+    }
   );
 }
 
-// ======================================================
-// HANDLE MESSAGE
-// ======================================================
+/* =========================
+   OTHER SERVICES
+========================= */
+
+async function showOtherServices(chatId) {
+
+  await sendMessage(
+    chatId,
+    `💼 HOJIIWWAN BIROO
+
+Tajaajiloota Waamara:
+
+📚 Barnoota
+📝 Qormaata
+📊 Qabxii
+👤 Profile
+🎯 Shaakala
+📖 Kitaaba
+
+👇 Tajaajila barbaadde filadhu.`,
+    {
+      reply_markup: mainKeyboard()
+    }
+  );
+}
+
+/* =========================
+   NORMAL MESSAGE
+========================= */
 
 async function handleMessage(msg) {
 
-  if (!msg.chat) return;
+  if (!msg || !msg.chat) return;
 
-  const chatId =
-    msg.chat.id;
-
+  const chatId = msg.chat.id;
   const text =
-    String(msg.text || "").trim();
+    typeof msg.text === "string"
+      ? msg.text.trim()
+      : "";
 
-  if (!text) return;
+  if (!msg.from) return;
 
-  await saveUser(msg);
+  try {
+    await saveUser(msg.from);
+  } catch (err) {
+    console.error(
+      "❌ Save user error:",
+      err
+    );
+  }
 
-  // START
   if (text === "/start") {
-
-    sessions.delete(chatId);
-
-    await sendMessage(
-      chatId,
-
-      "👋 BAGA NAGAA DHUFTAN!\n\n" +
-      "🤖 Ani Waamara dha.\n\n" +
-      "👇 Tajaajila barbaaddu filadhu.",
-
-      mainKeyboard()
-    );
-
+    await handleStart(msg);
     return;
   }
 
-  // MENU
   if (text === "/menu") {
+    sessions.delete(chatId);
+
+    await sendMessage(
+      chatId,
+      "📋 MENU",
+      {
+        reply_markup: mainKeyboard()
+      }
+    );
+
+    return;
+  }
+
+  if (text === "❌ Haqi") {
 
     sessions.delete(chatId);
 
     await sendMessage(
       chatId,
-      "📋 MENU WAAAMARA",
-      mainKeyboard()
+      "❌ Hojii amma gochaa turte haqameera.",
+      {
+        reply_markup: mainKeyboard()
+      }
     );
 
     return;
   }
 
-  const s =
-    sessions.get(chatId);
-
-  // CREATE EXAM
-  if (
-    s &&
-    s.type === "create_exam"
-  ) {
-
-    await processCreateExam(
-      chatId,
-      text,
-      msg
-    );
-
-    return;
-  }
-
-  // ADD QUESTIONS
-  if (
-    s &&
-    s.type === "add_questions"
-  ) {
-
-    await processAddQuestion(
-      chatId,
-      text
-    );
-
-    return;
-  }
-
-  // TAKE EXAM
-  if (
-    s &&
-    s.type === "take_exam"
-  ) {
-
-    await processTakeExam(
-      chatId,
-      text,
-      msg
-    );
-
-    return;
-  }
-
-  // ANSWER EXAM
-  if (
-    s &&
-    s.type === "answer_exam"
-  ) {
-
-    await processAnswer(
-      chatId,
-      text
-    );
-
-    return;
-  }
-
-  // MAIN BUTTONS
+  /*
+   CREATE EXAM
+  */
 
   if (text === "📝 Qormaata Uumi") {
+
     await startCreateExam(chatId);
     return;
   }
 
+  /*
+   TAKE EXAM
+  */
+
   if (text === "📖 Qormaata Fudhadhu") {
+
     await startTakeExam(chatId);
     return;
   }
 
+  /*
+   SCORE
+  */
+
   if (text === "📊 Qabxii Koo") {
-    await showScores(chatId, msg);
+
+    await showMyScores(
+      chatId,
+      msg.from.id
+    );
+
     return;
   }
 
+  /*
+   TEACHER EXAMS
+  */
+
   if (text === "👨‍🏫 Qormaata Koo") {
-    await teacherExams(chatId, msg);
+
+    await showTeacherExams(
+      chatId,
+      msg.from.id
+    );
+
     return;
   }
+
+  /*
+   LEARNING
+  */
 
   if (text === "📚 Barnoota") {
 
-    await sendMessage(
+    await showLearning(chatId);
+    return;
+  }
+
+  /*
+   PROFILE
+  */
+
+  if (text === "👤 Profile") {
+
+    await showProfile(
       chatId,
-
-      "📚 BARNOOTA\n\n" +
-      "📝 Qormaata\n" +
-      "📖 Qormaata Fudhachuu\n" +
-      "📊 Qabxii\n" +
-      "🎓 Barnoota dabalataa",
-
-      mainKeyboard()
+      msg.from
     );
 
     return;
   }
 
-  if (text === "👤 Profile") {
-    await profile(chatId, msg);
-    return;
-  }
+  /*
+   OTHER
+  */
 
   if (text === "💼 Hojiiwwan Biroo") {
 
-    await sendMessage(
-      chatId,
-
-      "💼 HOJIIWWAN BIROO\n\n" +
-      "🤖 Waamara Bot\n" +
-      "📝 Qormaata\n" +
-      "📚 Barnoota\n" +
-      "📊 Qabxii",
-
-      mainKeyboard()
-    );
-
+    await showOtherServices(chatId);
     return;
+  }
+
+  /*
+   ACTIVE SESSION
+  */
+
+  const session =
+    sessions.get(chatId);
+
+  if (session) {
+
+    /*
+     Exam code
+    */
+
+    if (
+      session.step ===
+      "exam_code"
+    ) {
+
+      await startExamByCode(
+        chatId,
+        msg,
+        text
+      );
+
+      return;
+    }
+
+    /*
+     Create exam
+    */
+
+    if (
+      session.step ===
+        "exam_title" ||
+      session.step ===
+        "exam_subject" ||
+      session.step ===
+        "exam_duration"
+    ) {
+
+      const handled =
+        await processCreateExam(
+          chatId,
+          msg,
+          text
+        );
+
+      if (handled) return;
+    }
+
+    /*
+     Questions
+    */
+
+    if (
+      [
+        "question_text",
+        "option_a",
+        "option_b",
+        "option_c",
+        "option_d",
+        "correct_answer",
+        "question_points",
+        "next_question"
+      ].includes(session.step)
+    ) {
+
+      const handled =
+        await processQuestion(
+          chatId,
+          msg,
+          text
+        );
+
+      if (handled) return;
+    }
+
+    /*
+     Taking exam
+     */
+
+    if (
+      session.step ===
+      "taking_exam"
+    ) {
+
+      await sendMessage(
+        chatId,
+        "👇 Deebii tokko keessaa filadhu."
+      );
+
+      return;
+    }
   }
 
   await sendMessage(
     chatId,
-    "❓ Ajaja kana hin hubanne.\n\n👇 Menu keessaa filadhu.",
-    mainKeyboard()
+    "📋 Mee menu keessaa tajaajila barbaadde filadhu.",
+    {
+      reply_markup: mainKeyboard()
+    }
   );
 }
 
-// ======================================================
-// WEBHOOK
-// ======================================================
+/* =========================
+   CALLBACK QUERY
+========================= */
+
+async function handleCallbackQuery(
+  callbackQuery
+) {
+
+  const data =
+    callbackQuery.data || "";
+
+  if (
+    data.startsWith("answer_")
+  ) {
+
+    const parts =
+      data.split("_");
+
+    /*
+      answer_questionId_A
+    */
+
+    const questionId =
+      parseInt(parts[1], 10);
+
+    const answerKey =
+      parts[2];
+
+    if (
+      Number.isNaN(questionId) ||
+      !["A", "B", "C", "D"].includes(
+        answerKey
+      )
+    ) {
+      await answerCallback(
+        callbackQuery.id,
+        "❌ Deebiin sirrii miti."
+      );
+
+      return;
+    }
+
+    await processAnswer(
+      callbackQuery,
+      questionId,
+      answerKey
+    );
+
+    return;
+  }
+
+  await answerCallback(
+    callbackQuery.id
+  );
+}
+
+/* =========================
+   WEBHOOK
+========================= */
 
 app.post(
   "/telegram/webhook",
   async (req, res) => {
 
+    res.sendStatus(200);
+
     try {
 
-      console.log(
-        "📩 Telegram update received"
-      );
+      const update =
+        req.body;
 
-      if (req.body.message) {
+      if (
+        update.callback_query
+      ) {
+
+        await handleCallbackQuery(
+          update.callback_query
+        );
+
+        return;
+      }
+
+      if (
+        update.message
+      ) {
 
         await handleMessage(
-          req.body.message
+          update.message
         );
+
+        return;
       }
 
-      if (req.body.callback_query) {
-
-        await handleCallback(
-          req.body.callback_query
-        );
-      }
-
-      res.sendStatus(200);
-
-    } catch (e) {
+    } catch (err) {
 
       console.error(
         "❌ Update error:",
-        e
+        err
       );
-
-      res.sendStatus(200);
     }
   }
 );
 
-// ======================================================
-// TELEGRAM COMMANDS
-// ======================================================
+/* =========================
+   HOME
+========================= */
 
-async function setupCommands() {
+app.get("/", (req, res) => {
 
-  await telegram(
-    "setMyCommands",
-    {
-      commands: [
-        {
-          command: "start",
-          description: "Waamara jalqabi"
-        },
-        {
-          command: "menu",
-          description: "Menu bani"
-        }
-      ]
+  res.send(
+    "🤖 Waamara Telegram Bot is online."
+  );
+});
+
+/* =========================
+   HEALTH
+========================= */
+
+app.get(
+  "/health",
+  async (req, res) => {
+
+    try {
+
+      await pool.query(
+        "SELECT 1"
+      );
+
+      res.json({
+        ok: true,
+        app: "Waamara",
+        database: "connected"
+      });
+
+    } catch (err) {
+
+      res.status(500).json({
+        ok: false,
+        app: "Waamara",
+        database: "error",
+        error: err.message
+      });
     }
-  );
+  }
+);
 
-  console.log(
-    "✅ Telegram commands configured."
-  );
-}
-
-// ======================================================
-// WEBHOOK
-// ======================================================
+/* =========================
+   SET WEBHOOK
+========================= */
 
 async function setupWebhook() {
 
-  const url =
-    `${RENDER_URL}/telegram/webhook`;
+  const renderUrl =
+    process.env.RENDER_EXTERNAL_URL;
 
-  await telegram(
-    "setWebhook",
-    {
-      url
-    }
-  );
+  if (!renderUrl) {
 
-  console.log(
-    `✅ Webhook set: ${url}`
-  );
-}
+    console.error(
+      "❌ RENDER_EXTERNAL_URL hin argamne."
+    );
 
-// ======================================================
-// START
-// ======================================================
+    return;
+  }
 
-async function start() {
+  const webhookUrl =
+    `${renderUrl}/telegram/webhook`;
 
   try {
 
-    await initDatabase();
+    const result =
+      await telegram(
+        "setWebhook",
+        {
+          url: webhookUrl
+        }
+      );
+
+    console.log(
+      "✅ Telegram webhook set:",
+      webhookUrl
+    );
+
+    console.log(
+      "Telegram:",
+      result
+    );
+
+  } catch (err) {
+
+    console.error(
+      "❌ Webhook error:",
+      err.message
+    );
+  }
+}
+
+/* =========================
+   BOT COMMANDS
+========================= */
+
+async function setupCommands() {
+
+  try {
+
+    await telegram(
+      "setMyCommands",
+      {
+        commands: [
+          {
+            command: "start",
+            description:
+              "Waamara jalqabi"
+          },
+          {
+            command: "menu",
+            description:
+              "Menu bani"
+          }
+        ]
+      }
+    );
+
+    console.log(
+      "✅ Bot commands configured."
+    );
+
+  } catch (err) {
+
+    console.error(
+      "❌ Commands error:",
+      err.message
+    );
+  }
+}
+
+/* =========================
+   START SERVER
+========================= */
+
+async function startServer() {
+
+  try {
+
+    await migrateDatabase();
 
     app.listen(
       PORT,
@@ -1737,37 +2107,20 @@ async function start() {
           `🚀 Waamara server running on port ${PORT}`
         );
 
-        try {
-          await setupCommands();
-          await setupWebhook();
-        } catch (e) {
-          console.error(
-            "❌ Telegram setup error:",
-            e.message
-          );
-        }
+        await setupCommands();
+        await setupWebhook();
       }
     );
 
-  } catch (e) {
+  } catch (err) {
 
     console.error(
-      "❌ Startup error:",
-      e
+      "❌ Server startup error:",
+      err
     );
 
     process.exit(1);
   }
 }
 
-start();
-
-process.on(
-  "unhandledRejection",
-  e => console.error("❌ Unhandled:", e)
-);
-
-process.on(
-  "uncaughtException",
-  e => console.error("❌ Exception:", e)
-);
+startServer();
