@@ -1,34 +1,122 @@
 const express = require("express");
 const https = require("https");
+const { Pool } = require("pg");
 
 const app = express();
 
 const PORT = process.env.PORT || 10000;
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const DATABASE_URL = process.env.DATABASE_URL;
 
 if (!TOKEN) {
   console.error("❌ TELEGRAM_BOT_TOKEN hin argamne.");
   process.exit(1);
 }
 
-const TELEGRAM_API = `https://api.telegram.org/bot${TOKEN}`;
+if (!DATABASE_URL) {
+  console.error("❌ DATABASE_URL hin argamne.");
+  process.exit(1);
+}
 
-// ======================================================
-// DATA
-// ======================================================
+/* =========================
+   DATABASE
+========================= */
 
-const users = new Map();
-const exams = new Map();
-const sessions = new Map();
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
 
-let nextExamId = 1001;
+async function db(query, params = []) {
+  const result = await pool.query(query, params);
+  return result.rows;
+}
 
-// ======================================================
-// RENDER HEALTH ROUTE
-// ======================================================
+async function initDatabase() {
+  console.log("Database initialization started...");
+
+  await db(`
+    CREATE TABLE IF NOT EXISTS users (
+      id BIGINT PRIMARY KEY,
+      first_name TEXT,
+      last_name TEXT,
+      username TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  await db(`
+    CREATE TABLE IF NOT EXISTS exams (
+      id BIGSERIAL PRIMARY KEY,
+      code TEXT UNIQUE NOT NULL,
+      title TEXT NOT NULL,
+      subject TEXT,
+      creator_id BIGINT NOT NULL REFERENCES users(id),
+      duration_minutes INTEGER DEFAULT 30,
+      status TEXT DEFAULT 'active',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  await db(`
+    CREATE TABLE IF NOT EXISTS questions (
+      id BIGSERIAL PRIMARY KEY,
+      exam_id BIGINT NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
+      question_text TEXT NOT NULL,
+      question_type TEXT DEFAULT 'multiple_choice',
+      points INTEGER DEFAULT 1,
+      question_order INTEGER DEFAULT 1
+    )
+  `);
+
+  await db(`
+    CREATE TABLE IF NOT EXISTS options (
+      id BIGSERIAL PRIMARY KEY,
+      question_id BIGINT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+      option_key TEXT NOT NULL,
+      option_text TEXT NOT NULL,
+      is_correct BOOLEAN DEFAULT FALSE
+    )
+  `);
+
+  await db(`
+    CREATE TABLE IF NOT EXISTS attempts (
+      id BIGSERIAL PRIMARY KEY,
+      exam_id BIGINT NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
+      student_id BIGINT NOT NULL REFERENCES users(id),
+      student_name TEXT NOT NULL,
+      score INTEGER DEFAULT 0,
+      total_points INTEGER DEFAULT 0,
+      percentage NUMERIC(5,2) DEFAULT 0,
+      started_at TIMESTAMPTZ DEFAULT NOW(),
+      submitted_at TIMESTAMPTZ
+    )
+  `);
+
+  await db(`
+    CREATE TABLE IF NOT EXISTS answers (
+      id BIGSERIAL PRIMARY KEY,
+      attempt_id BIGINT NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
+      question_id BIGINT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+      selected_option TEXT,
+      is_correct BOOLEAN DEFAULT FALSE,
+      points_earned INTEGER DEFAULT 0
+    )
+  `);
+
+  console.log("Database migrations completed.");
+}
+
+/* =========================
+   EXPRESS
+========================= */
+
+app.use(express.json());
 
 app.get("/", (req, res) => {
-  res.status(200).send(`
+  res.send(`
     <html>
       <head>
         <title>Waamara Bot</title>
@@ -36,35 +124,46 @@ app.get("/", (req, res) => {
       </head>
       <body style="font-family:Arial;text-align:center;padding:40px">
         <h1>🤖 Waamara Bot</h1>
-        <p>Telegram Bot is running.</p>
-        <p>Status: 🟢 Online</p>
+        <p>Waamara Telegram Bot is running.</p>
+        <p>📝 Qormaata uumuu</p>
+        <p>📖 Qormaata fudhachuu</p>
+        <p>📊 Qabxii agarsiisuu</p>
       </body>
     </html>
   `);
 });
 
-app.get("/health", (req, res) => {
-  res.status(200).json({
-    status: "ok",
-    app: "Waamara Bot",
-    message: "Waamara Telegram Bot is running",
-    time: new Date().toISOString()
-  });
+app.get("/health", async (req, res) => {
+  try {
+    await db("SELECT 1");
+
+    res.json({
+      status: "ok",
+      app: "Waamara Bot",
+      database: "connected",
+      time: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      database: "disconnected",
+      error: error.message
+    });
+  }
 });
 
-// ======================================================
-// TELEGRAM API
-// ======================================================
+/* =========================
+   TELEGRAM API
+========================= */
 
 function telegram(method, data = {}) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(data);
-    const url = new URL(`${TELEGRAM_API}/${method}`);
 
     const request = https.request(
       {
-        hostname: url.hostname,
-        path: url.pathname + url.search,
+        hostname: "api.telegram.org",
+        path: `/bot${TOKEN}/${method}`,
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -80,18 +179,14 @@ function telegram(method, data = {}) {
 
         response.on("end", () => {
           try {
-            const json = JSON.parse(result);
+            const parsed = JSON.parse(result);
 
-            if (!json.ok) {
-              reject(
-                new Error(
-                  json.description || "Telegram API error"
-                )
-              );
+            if (!parsed.ok) {
+              reject(new Error(parsed.description || "Telegram API error"));
               return;
             }
 
-            resolve(json.result);
+            resolve(parsed.result);
           } catch (error) {
             reject(error);
           }
@@ -106,28 +201,77 @@ function telegram(method, data = {}) {
   });
 }
 
-// ======================================================
-// SEND MESSAGE
-// ======================================================
-
-async function sendMessage(chatId, text, keyboard = null) {
-  const data = {
+async function sendMessage(chatId, text, options = {}) {
+  return telegram("sendMessage", {
     chat_id: chatId,
-    text: text
-  };
-
-  if (keyboard) {
-    data.reply_markup = keyboard;
-  }
-
-  return telegram("sendMessage", data);
+    text,
+    ...options
+  });
 }
 
-// ======================================================
-// MAIN MENU
-// ======================================================
+async function answerCallback(callbackId, text = "") {
+  try {
+    await telegram("answerCallbackQuery", {
+      callback_query_id: callbackId,
+      text
+    });
+  } catch (error) {
+    console.log("Callback error:", error.message);
+  }
+}
 
-function mainMenu() {
+/* =========================
+   USER
+========================= */
+
+async function saveUser(user) {
+  await db(
+    `
+    INSERT INTO users
+      (id, first_name, last_name, username)
+    VALUES
+      ($1, $2, $3, $4)
+    ON CONFLICT (id)
+    DO UPDATE SET
+      first_name = EXCLUDED.first_name,
+      last_name = EXCLUDED.last_name,
+      username = EXCLUDED.username
+    `,
+    [
+      user.id,
+      user.first_name || "",
+      user.last_name || "",
+      user.username || ""
+    ]
+  );
+}
+
+/* =========================
+   SESSION
+========================= */
+
+const sessions = new Map();
+
+function setSession(chatId, data) {
+  sessions.set(chatId, {
+    ...(sessions.get(chatId) || {}),
+    ...data
+  });
+}
+
+function getSession(chatId) {
+  return sessions.get(chatId) || {};
+}
+
+function clearSession(chatId) {
+  sessions.delete(chatId);
+}
+
+/* =========================
+   MAIN MENU
+========================= */
+
+function mainKeyboard() {
   return {
     keyboard: [
       [
@@ -139,1261 +283,1149 @@ function mainMenu() {
         { text: "📚 Barnoota" }
       ],
       [
-        { text: "💼 Hojiiwwan Biroo" },
-        { text: "👤 Profile" }
-      ],
-      [
-        { text: "⚙️ Settings" }
+        { text: "👤 Profile" },
+        { text: "💼 Hojiiwwan Biroo" }
       ]
     ],
     resize_keyboard: true
   };
 }
 
-// ======================================================
-// CANCEL MENU
-// ======================================================
+/* =========================
+   START
+========================= */
 
-function cancelKeyboard() {
-  return {
-    keyboard: [
-      [{ text: "❌ Haqi" }]
-    ],
-    resize_keyboard: true
-  };
+async function startBot(chatId, user) {
+  await saveUser(user);
+
+  clearSession(chatId);
+
+  await sendMessage(
+    chatId,
+    `🤖 *Baga nagaan dhuftan Waamara!*
+
+Waamara jechuun bot barnootaa fi qormaataa ti.
+
+Tajaajiloota armaan gadii keessaa filadhu:
+
+📝 Qormaata Uumi
+📖 Qormaata Fudhadhu
+📊 Qabxii Koo
+📚 Barnoota
+👤 Profile
+💼 Hojiiwwan Biroo`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: mainKeyboard()
+    }
+  );
 }
 
-// ======================================================
-// ANSWER BUTTONS
-// ======================================================
+/* =========================
+   CREATE EXAM
+========================= */
 
-function examAnswerKeyboard(options) {
-  return {
-    inline_keyboard: options.map((option, index) => [
-      {
-        text: `${String.fromCharCode(65 + index)}. ${option}`,
-        callback_data: `answer_${index}`
+async function createExamStart(chatId) {
+  setSession(chatId, {
+    action: "create_exam_title",
+    exam: {
+      questions: []
+    }
+  });
+
+  await sendMessage(
+    chatId,
+    `📝 *Qormaata Uumuu*
+
+Maqaa qormaataa galchi.
+
+Fakkeenya:
+*Qormaata Herregaa Kutaa 8*`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        keyboard: [[{ text: "❌ Haqi" }],
+        ],
+        resize_keyboard: true
       }
-    ])
-  };
+    }
+  );
 }
 
-// ======================================================
-// START COMMAND
-// ======================================================
+async function saveExam(chatId) {
+  const session = getSession(chatId);
+  const exam = session.exam;
 
-async function startBot() {
-  try {
-    await telegram("deleteWebhook", {
-      drop_pending_updates: true
-    });
+  const codeResult = await db(
+    "SELECT code FROM exams ORDER BY id DESC LIMIT 1"
+  );
 
-    await telegram("setMyCommands", {
-      commands: [
-        {
-          command: "start",
-          description: "Waamara jalqabi"
-        },
-        {
-          command: "menu",
-          description: "Menu bani"
-        },
-        {
-          command: "help",
-          description: "Gargaarsa"
-        },
-        {
-          command: "cancel",
-          description: "Hojii amma jiru haqi"
-        }
+  let code = "1001";
+
+  if (codeResult.length > 0) {
+    const last = parseInt(codeResult[0].code, 10);
+
+    if (!isNaN(last)) {
+      code = String(last + 1);
+    }
+  }
+
+  const examRows = await db(
+    `
+    INSERT INTO exams
+      (code, title, subject, creator_id, duration_minutes)
+    VALUES
+      ($1, $2, $3, $4, $5)
+    RETURNING id
+    `,
+    [
+      code,
+      exam.title,
+      exam.subject,
+      chatId,
+      exam.duration || 30
+    ]
+  );
+
+  const examId = examRows[0].id;
+
+  for (let i = 0; i < exam.questions.length; i++) {
+    const q = exam.questions[i];
+
+    const questionRows = await db(
+      `
+      INSERT INTO questions
+        (exam_id, question_text, question_type, points, question_order)
+      VALUES
+        ($1, $2, $3, $4, $5)
+      RETURNING id
+      `,
+      [
+        examId,
+        q.text,
+        "multiple_choice",
+        1,
+        i + 1
       ]
+    );
+
+    const questionId = questionRows[0].id;
+
+    for (const option of q.options) {
+      await db(
+        `
+        INSERT INTO options
+          (question_id, option_key, option_text, is_correct)
+        VALUES
+          ($1, $2, $3, $4)
+        `,
+        [
+          questionId,
+          option.key,
+          option.text,
+          option.key === q.correct
+        ]
+      );
+    }
+  }
+
+  clearSession(chatId);
+
+  await sendMessage(
+    chatId,
+    `✅ *Qormaanni uumameera!*
+
+📚 Maqaa: ${exam.title}
+📖 Barnoota: ${exam.subject}
+⏱ Yeroo: ${exam.duration || 30} daqiiqaa
+🔢 Lakkoofsa Qormaataa: *${code}*
+❓ Gaaffilee: ${exam.questions.length}
+
+Barattoonni qormaata kana fudhachuuf lakkoofsa kana fayyadamu.
+
+🔗 Exam Code:
+*${code}*`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: mainKeyboard()
+    }
+  );
+}
+
+/* =========================
+   TAKE EXAM
+========================= */
+
+async function takeExamStart(chatId) {
+  setSession(chatId, {
+    action: "take_exam_code"
+  });
+
+  await sendMessage(
+    chatId,
+    `📖 *Qormaata Fudhachuu*
+
+Lakkoofsa qormaataa galchi.
+
+Fakkeenya:
+*1001*`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        keyboard: [[{ text: "❌ Haqi" }],
+        ],
+        resize_keyboard: true
+      }
+    }
+  );
+}
+
+async function loadExam(chatId, code) {
+  const exams = await db(
+    `
+    SELECT *
+    FROM exams
+    WHERE code = $1
+      AND status = 'active'
+    `,
+    [code]
+  );
+
+  if (exams.length === 0) {
+    await sendMessage(
+      chatId,
+      "❌ Qormaanni lakkoofsa kana qabu hin argamne."
+    );
+    return;
+  }
+
+  const exam = exams[0];
+
+  const questions = await db(
+    `
+    SELECT *
+    FROM questions
+    WHERE exam_id = $1
+    ORDER BY question_order ASC, id ASC
+    `,
+    [exam.id]
+  );
+
+  if (questions.length === 0) {
+    await sendMessage(
+      chatId,
+      "❌ Qormaanni kun gaaffii hin qabu."
+    );
+    return;
+  }
+
+  const fullQuestions = [];
+
+  for (const question of questions) {
+    const options = await db(
+      `
+      SELECT option_key, option_text, is_correct
+      FROM options
+      WHERE question_id = $1
+      ORDER BY id ASC
+      `,
+      [question.id]
+    );
+
+    fullQuestions.push({
+      ...question,
+      options
+    });
+  }
+
+  setSession(chatId, {
+    action: "take_exam_name",
+    exam: {
+      ...exam,
+      questions: fullQuestions
+    }
+  });
+
+  await sendMessage(
+    chatId,
+    `📚 *${exam.title}*
+
+📖 Barnoota: ${exam.subject || "-"}
+❓ Gaaffii: ${questions.length}
+⏱ Yeroo: ${exam.duration_minutes} daqiiqaa
+
+Maqaa kee galchi:`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        keyboard: [[{ text: "❌ Haqi" }],
+        ],
+        resize_keyboard: true
+      }
+    }
+  );
+}
+
+async function startExam(chatId, studentName) {
+  const session = getSession(chatId);
+
+  const attemptRows = await db(
+    `
+    INSERT INTO attempts
+      (exam_id, student_id, student_name, total_points)
+    VALUES
+      ($1, $2, $3, $4)
+    RETURNING id
+    `,
+    [
+      session.exam.id,
+      chatId,
+      studentName,
+      session.exam.questions.reduce(
+        (sum, q) => sum + Number(q.points || 1),
+        0
+      )
+    ]
+  );
+
+  setSession(chatId, {
+    action: "answer_question",
+    studentName,
+    attemptId: attemptRows[0].id,
+    questionIndex: 0,
+    score: 0
+  });
+
+  await sendQuestion(chatId);
+}
+
+async function sendQuestion(chatId) {
+  const session = getSession(chatId);
+  const question = session.exam.questions[session.questionIndex];
+
+  if (!question) {
+    await finishExam(chatId);
+    return;
+  }
+
+  const buttons = [];
+
+  for (const option of question.options) {
+    buttons.push([
+      {
+        text: `${option.option_key}. ${option.option_text}`,
+        callback_data: `answer:${question.id}:${option.option_key}`
+      }
+    ]);
+  }
+
+  await sendMessage(
+    chatId,
+    `❓ *Gaaffii ${session.questionIndex + 1}/${session.exam.questions.length}*
+
+${question.question_text}
+
+📌 Qabxii: ${question.points || 1}`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: buttons
+      }
+    }
+  );
+}
+
+/* =========================
+   ANSWER
+========================= */
+
+async function handleAnswer(chatId, questionId, selectedOption) {
+  const session = getSession(chatId);
+
+  if (session.action !== "answer_question") {
+    return;
+  }
+
+  const question = session.exam.questions.find(
+    q => String(q.id) === String(questionId)
+  );
+
+  if (!question) {
+    return;
+  }
+
+  const correctOption = question.options.find(
+    o => o.is_correct
+  );
+
+  const isCorrect =
+    correctOption &&
+    correctOption.option_key === selectedOption;
+
+  const points = isCorrect
+    ? Number(question.points || 1)
+    : 0;
+
+  await db(
+    `
+    INSERT INTO answers
+      (attempt_id, question_id, selected_option, is_correct, points_earned)
+    VALUES
+      ($1, $2, $3, $4, $5)
+    `,
+    [
+      session.attemptId,
+      question.id,
+      selectedOption,
+      isCorrect,
+      points
+    ]
+  );
+
+  let newScore = Number(session.score || 0);
+
+  if (isCorrect) {
+    newScore += points;
+  }
+
+  setSession(chatId, {
+    score: newScore,
+    questionIndex: session.questionIndex + 1
+  });
+
+  if (isCorrect) {
+    await sendMessage(chatId, "✅ Deebiin kee sirrii dha!");
+  } else {
+    await sendMessage(
+      chatId,
+      `❌ Deebiin kee sirrii miti.
+
+✅ Deebiin sirrii:
+${correctOption ? correctOption.option_key : "-"}`
+    );
+  }
+
+  await sendQuestion(chatId);
+}
+
+/* =========================
+   FINISH EXAM
+========================= */
+
+async function finishExam(chatId) {
+  const session = getSession(chatId);
+
+  const totalPoints = session.exam.questions.reduce(
+    (sum, q) => sum + Number(q.points || 1),
+    0
+  );
+
+  const score = Number(session.score || 0);
+
+  const percentage =
+    totalPoints > 0
+      ? ((score / totalPoints) * 100).toFixed(2)
+      : "0.00";
+
+  await db(
+    `
+    UPDATE attempts
+    SET
+      score = $1,
+      percentage = $2,
+      submitted_at = NOW()
+    WHERE id = $3
+    `,
+    [
+      score,
+      percentage,
+      session.attemptId
+    ]
+  );
+
+  const correctRows = await db(
+    `
+    SELECT COUNT(*)::int AS count
+    FROM answers
+    WHERE attempt_id = $1
+      AND is_correct = TRUE
+    `,
+    [session.attemptId]
+  );
+
+  const wrongRows = await db(
+    `
+    SELECT COUNT(*)::int AS count
+    FROM answers
+    WHERE attempt_id = $1
+      AND is_correct = FALSE
+    `,
+    [session.attemptId]
+  );
+
+  const correct = correctRows[0].count;
+  const wrong = wrongRows[0].count;
+
+  clearSession(chatId);
+
+  await sendMessage(
+    chatId,
+    `🎉 *Qormaata xumurteetta!*
+
+📚 Qormaata: ${session.exam.title}
+
+👤 Barataa: ${session.studentName}
+
+🏆 Qabxii: *${score}/${totalPoints}*
+📊 Percentage: *${percentage}%*
+
+✅ Sirrii: ${correct}
+❌ Sirrii hin taane: ${wrong}
+
+Galmee kee database keessatti kuufameera.`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: mainKeyboard()
+    }
+  );
+}
+
+/* =========================
+   MY RESULTS
+========================= */
+
+async function myResults(chatId) {
+  const rows = await db(
+    `
+    SELECT
+      e.title,
+      e.subject,
+      a.score,
+      a.total_points,
+      a.percentage,
+      a.submitted_at
+    FROM attempts a
+    JOIN exams e ON e.id = a.exam_id
+    WHERE a.student_id = $1
+      AND a.submitted_at IS NOT NULL
+    ORDER BY a.submitted_at DESC
+    LIMIT 10
+    `,
+    [chatId]
+  );
+
+  if (rows.length === 0) {
+    await sendMessage(
+      chatId,
+      `📊 *Qabxii Koo*
+
+Ammaaf qormaata xumurte tokko illee hin qabdu.`,
+      {
+        parse_mode: "Markdown"
+      }
+    );
+
+    return;
+  }
+
+  let text = "📊 *Qabxii Koo*\n\n";
+
+  rows.forEach((row, index) => {
+    text +=
+      `${index + 1}. *${row.title}*\n` +
+      `📖 ${row.subject || "-"}\n` +
+      `🏆 ${row.score}/${row.total_points}\n` +
+      `📊 ${row.percentage}%\n\n`;
+  });
+
+  await sendMessage(chatId, text, {
+    parse_mode: "Markdown",
+    reply_markup: mainKeyboard()
+  });
+}
+
+/* =========================
+   MY EXAMS - TEACHER
+========================= */
+
+async function myExams(chatId) {
+  const exams = await db(
+    `
+    SELECT
+      e.id,
+      e.code,
+      e.title,
+      e.subject,
+      e.created_at,
+      COUNT(DISTINCT q.id)::int AS questions
+    FROM exams e
+    LEFT JOIN questions q ON q.exam_id = e.id
+    WHERE e.creator_id = $1
+    GROUP BY e.id
+    ORDER BY e.created_at DESC
+    `,
+    [chatId]
+  );
+
+  if (exams.length === 0) {
+    await sendMessage(
+      chatId,
+      "📝 Ati hanga ammaatti qormaata hin uumne."
+    );
+    return;
+  }
+
+  let text = "📝 *Qormaata Koo*\n\n";
+
+  exams.forEach((exam, index) => {
+    text +=
+      `${index + 1}. *${exam.title}*\n` +
+      `📖 ${exam.subject || "-"}\n` +
+      `🔢 Code: *${exam.code}*\n` +
+      `❓ Gaaffii: ${exam.questions}\n\n`;
+  });
+
+  await sendMessage(chatId, text, {
+    parse_mode: "Markdown",
+    reply_markup: mainKeyboard()
+  });
+}
+
+/* =========================
+   PROFILE
+========================= */
+
+async function profile(chatId) {
+  const userRows = await db(
+    "SELECT * FROM users WHERE id = $1",
+    [chatId]
+  );
+
+  if (userRows.length === 0) {
+    await sendMessage(chatId, "❌ Profile hin argamne.");
+    return;
+  }
+
+  const user = userRows[0];
+
+  const created = await db(
+    "SELECT COUNT(*)::int AS count FROM exams WHERE creator_id = $1",
+    [chatId]
+  );
+
+  const taken = await db(
+    "SELECT COUNT(*)::int AS count FROM attempts WHERE student_id = $1",
+    [chatId]
+  );
+
+  await sendMessage(
+    chatId,
+    `👤 *Profile*
+
+🆔 Telegram ID: ${user.id}
+👤 Maqaa: ${user.first_name || "-"} ${user.last_name || ""}
+🔹 Username: @${user.username || "-"}
+
+📝 Qormaata uumte: ${created[0].count}
+📖 Qormaata fudhatte: ${taken[0].count}`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: mainKeyboard()
+    }
+  );
+}
+
+/* =========================
+   OTHER SERVICES
+========================= */
+
+async function education(chatId) {
+  await sendMessage(
+    chatId,
+    `📚 *Barnoota*
+
+Waamara keessatti tajaajiloonni barnootaa gara fuulduraatti ni dabalamau.
+
+• 📖 Barnoota
+• ❓ Gaaffii fi Deebii
+• 📝 Shaakala
+• 📊 Qormaata
+• 🎓 Qabxii fi bu'aa
+
+Tajaajiloota kana gara fuulduraatti bal'inaan ni ijaarra.`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: mainKeyboard()
+    }
+  );
+}
+
+async function otherServices(chatId) {
+  await sendMessage(
+    chatId,
+    `💼 *Hojiiwwan Biroo*
+
+Waamara gara fuulduraatti:
+
+🔎 Barbaacha
+📢 Beeksisa
+📚 Faayila barnootaa
+❓ Gaaffii fi deebii
+👥 Hawaasa barattootaa
+📨 Ergaa
+
+fi tajaajila biroo ni qabaata.`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: mainKeyboard()
+    }
+  );
+}
+
+/* =========================
+   MESSAGE HANDLER
+========================= */
+
+async function handleMessage(message) {
+  if (!message || !message.chat) {
+    return;
+  }
+
+  const chatId = message.chat.id;
+  const user = message.from || {};
+
+  await saveUser(user);
+
+  const text = (message.text || "").trim();
+
+  if (text === "/start") {
+    await startBot(chatId, user);
+    return;
+  }
+
+  if (text === "❌ Haqi" || text === "/cancel") {
+    clearSession(chatId);
+
+    await sendMessage(
+      chatId,
+      "❌ Hojii haqameera.",
+      {
+        reply_markup: mainKeyboard()
+      }
+    );
+
+    return;
+  }
+
+  const session = getSession(chatId);
+
+  /* CREATE EXAM */
+
+  if (text === "📝 Qormaata Uumi") {
+    await createExamStart(chatId);
+    return;
+  }
+
+  if (session.action === "create_exam_title") {
+    session.exam.title = text;
+    session.action = "create_exam_subject";
+
+    setSession(chatId, session);
+
+    await sendMessage(
+      chatId,
+      "📖 Barnoota/Subject qormaataa galchi.\n\nFakkeenya: Herrega"
+    );
+
+    return;
+  }
+
+  if (session.action === "create_exam_subject") {
+    session.exam.subject = text;
+    session.action = "create_exam_duration";
+
+    setSession(chatId, session);
+
+    await sendMessage(
+      chatId,
+      "⏱ Yeroo qormaataa daqiiqaan galchi.\n\nFakkeenya: 30"
+    );
+
+    return;
+  }
+
+  if (session.action === "create_exam_duration") {
+    const duration = parseInt(text, 10);
+
+    if (isNaN(duration) || duration <= 0) {
+      await sendMessage(
+        chatId,
+        "❌ Lakkoofsa sirrii galchi. Fakkeenya: 30"
+      );
+      return;
+    }
+
+    session.exam.duration = duration;
+    session.action = "create_question";
+
+    setSession(chatId, session);
+
+    await sendMessage(
+      chatId,
+      `❓ Gaaffii #${session.exam.questions.length + 1} galchi.`
+    );
+
+    return;
+  }
+
+  if (session.action === "create_question") {
+    session.exam.questions.push({
+      text,
+      options: [],
+      correct: null
     });
 
-    console.log("🤖 Waamara Telegram Bot jalqabe.");
+    session.action = "option_a";
 
-    let offset = 0;
+    setSession(chatId, session);
 
-    while (true) {
-      try {
-        const updates = await telegram("getUpdates", {
-          offset: offset,
-          timeout: 30,
-          allowed_updates: [
-            "message",
-            "callback_query"
-          ]
-        });
+    await sendMessage(
+      chatId,
+      "🅰️ Filannoo A galchi."
+    );
 
-        for (const update of updates) {
-          offset = update.update_id + 1;
+    return;
+  }
 
-          try {
-            await handleUpdate(update);
-          } catch (error) {
-            console.error(
-              "❌ Update error:",
-              error.message
-            );
+  if (session.action === "option_a") {
+    const q = session.exam.questions.at(-1);
+
+    q.options.push({
+      key: "A",
+      text
+    });
+
+    session.action = "option_b";
+
+    setSession(chatId, session);
+
+    await sendMessage(chatId, "🅱️ Filannoo B galchi.");
+
+    return;
+  }
+
+  if (session.action === "option_b") {
+    const q = session.exam.questions.at(-1);
+
+    q.options.push({
+      key: "B",
+      text
+    });
+
+    session.action = "option_c";
+
+    setSession(chatId, session);
+
+    await sendMessage(chatId, "©️ Filannoo C galchi.");
+
+    return;
+  }
+
+  if (session.action === "option_c") {
+    const q = session.exam.questions.at(-1);
+
+    q.options.push({
+      key: "C",
+      text
+    });
+
+    session.action = "option_d";
+
+    setSession(chatId, session);
+
+    await sendMessage(chatId, "🅳 Filannoo D galchi.");
+
+    return;
+  }
+
+  if (session.action === "option_d") {
+    const q = session.exam.questions.at(-1);
+
+    q.options.push({
+      key: "D",
+      text
+    });
+
+    session.action = "correct_answer";
+
+    setSession(chatId, session);
+
+    await sendMessage(
+      chatId,
+      `✅ Deebii sirrii filadhu.
+
+A, B, C ykn D qofa galchi.`
+    );
+
+    return;
+  }
+
+  if (session.action === "correct_answer") {
+    const answer = text.toUpperCase();
+
+    if (!["A", "B", "C", "D"].includes(answer)) {
+      await sendMessage(
+        chatId,
+        "❌ A, B, C ykn D qofa galchi."
+      );
+      return;
+    }
+
+    const q = session.exam.questions.at(-1);
+    q.correct = answer;
+
+    session.action = "more_questions";
+
+    setSession(chatId, session);
+
+    await sendMessage(
+      chatId,
+      `✅ Gaaffiin ${session.exam.questions.length} qophaa'eera.
+
+Gaaffii biraa dabaluuf:
+👉 *Eeyyee*
+
+Yoo xumurte:
+👉 *Lakki*`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          keyboard: [
+            [
+              { text: "Eeyyee" },
+              { text: "Lakki" }
+            ],
+            [
+              { text: "❌ Haqi" }
+            ]
+          ],
+          resize_keyboard: true
+        }
+      }
+    );
+
+    return;
+  }
+
+  if (session.action === "more_questions") {
+    const answer = text.toLowerCase();
+
+    if (answer === "eeyyee" || answer === "yes") {
+      session.action = "create_question";
+
+      setSession(chatId, session);
+
+      await sendMessage(
+        chatId,
+        `❓ Gaaffii #${session.exam.questions.length + 1} galchi.`,
+        {
+          reply_markup: {
+            keyboard: [[{ text: "❌ Haqi" }],
+            ],
+            resize_keyboard: true
           }
+        }
+      );
+
+      return;
+    }
+
+    if (answer === "lakki" || answer === "no") {
+      await saveExam(chatId);
+      return;
+    }
+
+    await sendMessage(
+      chatId,
+      "👉 Eeyyee ykn Lakki jedhii deebisi."
+    );
+
+    return;
+  }
+
+  /* TAKE EXAM */
+
+  if (text === "📖 Qormaata Fudhadhu") {
+    await takeExamStart(chatId);
+    return;
+  }
+
+  if (session.action === "take_exam_code") {
+    await loadExam(chatId, text);
+    return;
+  }
+
+  if (session.action === "take_exam_name") {
+    if (text.length < 2) {
+      await sendMessage(
+        chatId,
+        "❌ Maqaa sirrii galchi."
+      );
+      return;
+    }
+
+    await startExam(chatId, text);
+    return;
+  }
+
+  /* RESULTS */
+
+  if (text === "📊 Qabxii Koo") {
+    await myResults(chatId);
+    return;
+  }
+
+  /* PROFILE */
+
+  if (text === "👤 Profile") {
+    await profile(chatId);
+    return;
+  }
+
+  /* EDUCATION */
+
+  if (text === "📚 Barnoota") {
+    await education(chatId);
+    return;
+  }
+
+  /* OTHER */
+
+  if (text === "💼 Hojiiwwan Biroo") {
+    await otherServices(chatId);
+    return;
+  }
+
+  /* DEFAULT */
+
+  await sendMessage(
+    chatId,
+    "🤖 Ajaja kana hin hubanne. Maaloo menu keessaa filadhu.",
+    {
+      reply_markup: mainKeyboard()
+    }
+  );
+}
+
+/* =========================
+   CALLBACK HANDLER
+========================= */
+
+async function handleCallback(callback) {
+  if (!callback || !callback.message) {
+    return;
+  }
+
+  const chatId = callback.message.chat.id;
+  const data = callback.data || "";
+
+  await answerCallback(callback.id);
+
+  if (data.startsWith("answer:")) {
+    const parts = data.split(":");
+
+    const questionId = parts[1];
+    const selectedOption = parts[2];
+
+    await handleAnswer(
+      chatId,
+      questionId,
+      selectedOption
+    );
+  }
+}
+
+/* =========================
+   POLLING
+========================= */
+
+let offset = 0;
+let polling = false;
+
+async function pollTelegram() {
+  if (polling) {
+    return;
+  }
+
+  polling = true;
+
+  try {
+    const updates = await telegram("getUpdates", {
+      offset,
+      timeout: 25,
+      allowed_updates: ["message", "callback_query"]
+    });
+
+    for (const update of updates) {
+      offset = update.update_id + 1;
+
+      try {
+        if (update.message) {
+          await handleMessage(update.message);
+        }
+
+        if (update.callback_query) {
+          await handleCallback(update.callback_query);
         }
       } catch (error) {
         console.error(
-          "❌ Telegram connection error:",
+          "Update error:",
           error.message
-        );
-
-        await new Promise(resolve =>
-          setTimeout(resolve, 3000)
         );
       }
     }
   } catch (error) {
     console.error(
-      "❌ Bot startup error:",
+      "Telegram polling error:",
       error.message
+    );
+  } finally {
+    polling = false;
+
+    setTimeout(
+      pollTelegram,
+      1000
+    );
+  }
+}
+
+/* =========================
+   START SERVER
+========================= */
+
+async function start() {
+  try {
+    await initDatabase();
+
+    app.listen(
+      PORT,
+      "0.0.0.0",
+      () => {
+        console.log(
+          `🚀 Waamara server running on port ${PORT}`
+        );
+
+        pollTelegram();
+      }
+    );
+  } catch (error) {
+    console.error(
+      "❌ Server startup failed:",
+      error
     );
 
     process.exit(1);
   }
 }
 
-// ======================================================
-// UPDATE HANDLER
-// ======================================================
-
-async function handleUpdate(update) {
-
-  // CALLBACK
-  if (update.callback_query) {
-    await handleCallback(
-      update.callback_query
-    );
-    return;
-  }
-
-  // MESSAGE
-  if (!update.message) {
-    return;
-  }
-
-  const message = update.message;
-  const chatId = message.chat.id;
-  const text = message.text || "";
-
-  // USER SAVE
-  if (!users.has(chatId)) {
-    users.set(chatId, {
-      id: chatId,
-      firstName:
-        message.from?.first_name || "",
-      lastName:
-        message.from?.last_name || "",
-      username:
-        message.from?.username || "",
-      createdAt:
-        new Date().toISOString()
-    });
-  }
-
-  // START
-  if (text === "/start") {
-
-    sessions.delete(chatId);
-
-    await sendMessage(
-      chatId,
-      `🤖 BAGA NAGAAN DHUFTAN GARA WAAMARA!
-
-Waamara botii barnootaa fi hojiiwwan adda addaati.
-
-📝 Qormaata uumuu dandeessa.
-📖 Qormaata fudhachuu dandeessa.
-📊 Qabxii kee ilaaluu dandeessa.
-📚 Barnoota argachuu dandeessa.
-💼 Hojiiwwan biroo fayyadamuu dandeessa.
-
-👇 Mee hojii barbaadde filadhu.`,
-      mainMenu()
-    );
-
-    return;
-  }
-
-  // MENU
-  if (text === "/menu") {
-
-    sessions.delete(chatId);
-
-    await sendMessage(
-      chatId,
-      "🏠 MENU GUDDAA",
-      mainMenu()
-    );
-
-    return;
-  }
-
-  // HELP
-  if (text === "/help") {
-
-    await sendMessage(
-      chatId,
-      `ℹ️ GARGAARSA WAAMARA
-
-📝 Qormaata Uumi
-Qormaata haaraa uumuu.
-
-📖 Qormaata Fudhadhu
-Koodii fayyadamuun qormaata fudhachuu.
-
-📊 Qabxii Koo
-Bu'aa qormaata ati fudhatte ilaalu.
-
-📚 Barnoota
-Barnoota adda addaa argachuu.
-
-💼 Hojiiwwan Biroo
-Tajaajila gara garaa argachuu.
-
-❌ /cancel
-Hojii adeemaa jiru haquu.`,
-      mainMenu()
-    );
-
-    return;
-  }
-
-  // CANCEL
-  if (
-    text === "/cancel" ||
-    text === "❌ Haqi"
-  ) {
-
-    sessions.delete(chatId);
-
-    await sendMessage(
-      chatId,
-      "✅ Hojii amma adeemaa ture haqame.",
-      mainMenu()
-    );
-
-    return;
-  }
-
-  await handleText(
-    chatId,
-    text,
-    message
-  );
-}
-
-// ======================================================
-// TEXT HANDLER
-// ======================================================
-
-async function handleText(
-  chatId,
-  text,
-  message
-) {
-
-  const session = sessions.get(chatId);
-
-  // CREATE EXAM
-  if (text === "📝 Qormaata Uumi") {
-
-    sessions.set(chatId, {
-      type: "create_exam",
-      step: "title",
-
-      exam: {
-        creatorId: chatId,
-        creatorName:
-          message.from?.first_name ||
-          "Barsiisaa",
-        questions: []
-      }
-    });
-
-    await sendMessage(
-      chatId,
-      `📝 QORMAATA UUMI
-
-Maqaa qormaataa barreessi.
-
-Fakkeenya:
-Qormaata Herrega Kutaa 8`,
-      cancelKeyboard()
-    );
-
-    return;
-  }
-
-  // JOIN EXAM
-  if (text === "📖 Qormaata Fudhadhu") {
-
-    sessions.set(chatId, {
-      type: "join_exam",
-      step: "code"
-    });
-
-    await sendMessage(
-      chatId,
-      `📖 QORMAATA FUDHADHU
-
-Koodii qormaataa galchi.
-
-Fakkeenya:
-1001`,
-      cancelKeyboard()
-    );
-
-    return;
-  }
-
-  // RESULTS
-  if (text === "📊 Qabxii Koo") {
-
-    await showMyResults(chatId);
-
-    return;
-  }
-
-  // EDUCATION
-  if (text === "📚 Barnoota") {
-
-    await sendMessage(
-      chatId,
-      `📚 BARNOOTA
-
-Waamara keessatti barnoota gara garaa ni argatta.
-
-📐 Herrega
-📖 Afaan Oromoo
-🌍 Saayinsii
-📚 Hawaasummaa
-🕌 Barnoota Islaamaa
-💻 Teknooloojii
-
-Kutaan barnootaa gara fuulduraatti
-bal'inaan ni dabalama.`,
-      mainMenu()
-    );
-
-    return;
-  }
-
-  // OTHER SERVICES
-  if (text === "💼 Hojiiwwan Biroo") {
-
-    await sendMessage(
-      chatId,
-      `💼 HOJIIWWAN BIROO
-
-Waamara gara fuulduraatti tajaajiloota hedduu qabaata.
-
-🔹 Gaaffii fi deebii
-🔹 Faayila qooduu
-🔹 Beeksisa
-🔹 Search
-🔹 Galmee
-🔹 Report
-🔹 Tajaajila barsiisotaa
-🔹 Tajaajila barattootaa
-
-🚧 Tajaajiloonni kun tartiibaan
-itti dabalamu.`,
-      mainMenu()
-    );
-
-    return;
-  }
-
-  // PROFILE
-  if (text === "👤 Profile") {
-
-    const user = users.get(chatId);
-
-    await sendMessage(
-      chatId,
-      `👤 PROFILE
-
-Maqaa:
-${user?.firstName || "-"}
-
-Username:
-${
-  user?.username
-    ? "@" + user.username
-    : "-"
-}
-
-Telegram ID:
-${chatId}
-
-📝 Qormaata uumte:
-${countCreatedExams(chatId)}
-
-📖 Qormaata fudhatte:
-${countTakenExams(chatId)}`,
-      mainMenu()
-    );
-
-    return;
-  }
-
-  // SETTINGS
-  if (text === "⚙️ Settings") {
-
-    await sendMessage(
-      chatId,
-      `⚙️ SETTINGS
-
-🌐 Afaan:
-Afaan Oromoo
-
-🔔 Beeksisa:
-Banaa
-
-🤖 Bot:
-Waamara
-
-📦 Version:
-1.0.0`,
-      mainMenu()
-    );
-
-    return;
-  }
-
-  // NO SESSION
-  if (!session) {
-
-    await sendMessage(
-      chatId,
-      "Mee menu keessaa hojii tokko filadhu.",
-      mainMenu()
-    );
-
-    return;
-  }
-
-  // CREATE SESSION
-  if (
-    session.type ===
-    "create_exam"
-  ) {
-
-    await handleCreateExam(
-      chatId,
-      text,
-      session
-    );
-
-    return;
-  }
-
-  // JOIN SESSION
-  if (
-    session.type ===
-    "join_exam"
-  ) {
-
-    await handleJoinExam(
-      chatId,
-      text,
-      session
-    );
-
-    return;
-  }
-}
-
-// ======================================================
-// CREATE EXAM
-// ======================================================
-
-async function handleCreateExam(
-  chatId,
-  text,
-  session
-) {
-
-  // TITLE
-  if (session.step === "title") {
-
-    session.exam.title = text;
-
-    session.step = "subject";
-
-    await sendMessage(
-      chatId,
-      `📚 Maqaa barnootaa galchi.
-
-Fakkeenya:
-Herrega`,
-      cancelKeyboard()
-    );
-
-    return;
-  }
-
-  // SUBJECT
-  if (session.step === "subject") {
-
-    session.exam.subject = text;
-
-    session.step = "question";
-
-    await sendMessage(
-      chatId,
-      `❓ GAAFFII 1
-
-Gaaffii kee barreessi.
-
-Fakkeenya:
-2 + 2 = meeqa?`,
-      cancelKeyboard()
-    );
-
-    return;
-  }
-
-  // QUESTION
-  if (session.step === "question") {
-
-    session.currentQuestion = {
-      question: text,
-      options: [],
-      correct: null,
-      points: 1
-    };
-
-    session.step = "option1";
-
-    await sendMessage(
-      chatId,
-      "A. Filannoo A barreessi.",
-      cancelKeyboard()
-    );
-
-    return;
-  }
-
-  // OPTION A
-  if (session.step === "option1") {
-
-    session.currentQuestion.options[0] =
-      text;
-
-    session.step = "option2";
-
-    await sendMessage(
-      chatId,
-      "B. Filannoo B barreessi."
-    );
-
-    return;
-  }
-
-  // OPTION B
-  if (session.step === "option2") {
-
-    session.currentQuestion.options[1] =
-      text;
-
-    session.step = "option3";
-
-    await sendMessage(
-      chatId,
-      "C. Filannoo C barreessi."
-    );
-
-    return;
-  }
-
-  // OPTION C
-  if (session.step === "option3") {
-
-    session.currentQuestion.options[2] =
-      text;
-
-    session.step = "option4";
-
-    await sendMessage(
-      chatId,
-      "D. Filannoo D barreessi."
-    );
-
-    return;
-  }
-
-  // OPTION D
-  if (session.step === "option4") {
-
-    session.currentQuestion.options[3] =
-      text;
-
-    session.step = "correct";
-
-    await sendMessage(
-      chatId,
-      `✅ DEEBII SIRRII FILADHU
-
-A = 1
-B = 2
-C = 3
-D = 4
-
-Lakkoofsa qofa barreessi.`,
-      cancelKeyboard()
-    );
-
-    return;
-  }
-
-  // CORRECT ANSWER
-  if (session.step === "correct") {
-
-    const answer = Number(text);
-
-    if (
-      ![1, 2, 3, 4].includes(answer)
-    ) {
-
-      await sendMessage(
-        chatId,
-        "❌ Mee 1, 2, 3 ykn 4 keessaa tokko galchi."
-      );
-
-      return;
-    }
-
-    session.currentQuestion.correct =
-      answer - 1;
-
-    session.exam.questions.push(
-      session.currentQuestion
-    );
-
-    session.step = "more";
-
-    await sendMessage(
-      chatId,
-      `✅ Gaaffiin ${
-        session.exam.questions.length
-      } qabame.
-
-❓ Gaaffii biraa dabaluu barbaaddaa?
-
-"Eeyyee" ykn "Lakkii" barreessi.`
-    );
-
-    return;
-  }
-
-  // MORE QUESTIONS
-  if (session.step === "more") {
-
-    const answer =
-      text.toLowerCase().trim();
-
-    if (
-      answer === "eeyyee" ||
-      answer === "eyyee" ||
-      answer === "yes"
-    ) {
-
-      session.step = "question";
-
-      await sendMessage(
-        chatId,
-        `❓ GAAFFII ${
-          session.exam.questions.length + 1
-        }
-
-Gaaffii kee barreessi.`
-      );
-
-      return;
-    }
-
-    if (
-      answer === "lakkii" ||
-      answer === "lakki" ||
-      answer === "no"
-    ) {
-
-      await finishExam(
-        chatId,
-        session
-      );
-
-      return;
-    }
-
-    await sendMessage(
-      chatId,
-      'Mee "Eeyyee" ykn "Lakkii" barreessi.'
-    );
-  }
-}
-
-// ======================================================
-// FINISH EXAM
-// ======================================================
-
-async function finishExam(
-  chatId,
-  session
-) {
-
-  if (
-    session.exam.questions.length === 0
-  ) {
-
-    sessions.delete(chatId);
-
-    await sendMessage(
-      chatId,
-      "❌ Qormaanni gaaffii tokko illee hin qabu.",
-      mainMenu()
-    );
-
-    return;
-  }
-
-  const code =
-    String(nextExamId++);
-
-  const exam = {
-    id: code,
-    title: session.exam.title,
-    subject: session.exam.subject,
-    creatorId: session.exam.creatorId,
-    creatorName: session.exam.creatorName,
-    questions: session.exam.questions,
-    createdAt:
-      new Date().toISOString(),
-    results: []
-  };
-
-  exams.set(code, exam);
-
-  sessions.delete(chatId);
-
-  await sendMessage(
-    chatId,
-    `🎉 QORMAANNI UUWAME!
-
-📚 Maqaa:
-${exam.title}
-
-📖 Barnoota:
-${exam.subject}
-
-❓ Gaaffilee:
-${exam.questions.length}
-
-🔑 KOODII QORMAATAA:
-${code}
-
-📢 Koodii kana barattootaaf kenni.
-
-Barataan:
-📖 Qormaata Fudhadhu
-→ Koodii galcha
-→ Maqaa isaa galcha
-→ Qormaata fudhata.`,
-    mainMenu()
-  );
-}
-
-// ======================================================
-// JOIN EXAM
-// ======================================================
-
-async function handleJoinExam(
-  chatId,
-  text,
-  session
-) {
-
-  // CODE
-  if (session.step === "code") {
-
-    const code = text.trim();
-
-    const exam = exams.get(code);
-
-    if (!exam) {
-
-      await sendMessage(
-        chatId,
-        `❌ Qormaata koodii:
-
-${code}
-
-jedhu hin argamne.
-
-Mee koodii sirrii galchi.`
-      );
-
-      return;
-    }
-
-    session.examId = code;
-
-    session.step = "student_name";
-
-    await sendMessage(
-      chatId,
-      `✅ QORMAANNI ARGAME!
-
-📚 ${exam.title}
-📖 ${exam.subject}
-❓ Gaaffilee: ${exam.questions.length}
-
-👤 Amma maqaa kee barreessi.`
-    );
-
-    return;
-  }
-
-  // STUDENT NAME
-  if (
-    session.step ===
-    "student_name"
-  ) {
-
-    const exam =
-      exams.get(session.examId);
-
-    if (!exam) {
-
-      sessions.delete(chatId);
-
-      await sendMessage(
-        chatId,
-        "❌ Qormaanni kun hin argamne.",
-        mainMenu()
-      );
-
-      return;
-    }
-
-    session.studentName = text;
-
-    session.step = "taking";
-    session.questionIndex = 0;
-    session.answers = [];
-    session.score = 0;
-
-    await sendQuestion(
-      chatId,
-      exam,
-      session
-    );
-  }
-}
-
-// ======================================================
-// SEND QUESTION
-// ======================================================
-
-async function sendQuestion(
-  chatId,
-  exam,
-  session
-) {
-
-  const index =
-    session.questionIndex;
-
-  const question =
-    exam.questions[index];
-
-  if (!question) {
-
-    await finishStudentExam(
-      chatId,
-      exam,
-      session
-    );
-
-    return;
-  }
-
-  await sendMessage(
-    chatId,
-    `📝 QORMAATA
-
-📌 Gaaffii ${
-      index + 1
-    }/${exam.questions.length}
-
-${question.question}`,
-    examAnswerKeyboard(
-      question.options
-    )
-  );
-}
-
-// ======================================================
-// CALLBACK
-// ======================================================
-
-async function handleCallback(
-  callback
-) {
-
-  const chatId =
-    callback.message.chat.id;
-
-  const data =
-    callback.data;
-
-  await telegram(
-    "answerCallbackQuery",
-    {
-      callback_query_id:
-        callback.id
-    }
-  );
-
-  const session =
-    sessions.get(chatId);
-
-  if (
-    !session ||
-    session.step !== "taking"
-  ) {
-
-    await sendMessage(
-      chatId,
-      "❌ Qormaanni kun xumurameera ykn hin jiru."
-    );
-
-    return;
-  }
-
-  if (
-    !data.startsWith("answer_")
-  ) {
-    return;
-  }
-
-  const selected =
-    Number(
-      data.replace(
-        "answer_",
-        ""
-      )
-    );
-
-  const exam =
-    exams.get(
-      session.examId
-    );
-
-  if (!exam) {
-    return;
-  }
-
-  const question =
-    exam.questions[
-      session.questionIndex
-    ];
-
-  if (!question) {
-    return;
-  }
-
-  const correct =
-    selected === question.correct;
-
-  if (correct) {
-    session.score +=
-      question.points;
-  }
-
-  session.answers.push({
-    question:
-      question.question,
-
-    selected: selected,
-
-    correct:
-      question.correct,
-
-    isCorrect:
-      correct
-  });
-
-  session.questionIndex++;
-
-  await sendQuestion(
-    chatId,
-    exam,
-    session
-  );
-}
-
-// ======================================================
-// FINISH STUDENT EXAM
-// ======================================================
-
-async function finishStudentExam(
-  chatId,
-  exam,
-  session
-) {
-
-  const total =
-    exam.questions.reduce(
-      (sum, question) =>
-        sum + question.points,
-      0
-    );
-
-  const percentage =
-    total > 0
-      ? Math.round(
-          (session.score / total) *
-            100
-        )
-      : 0;
-
-  const correctAnswers =
-    session.answers.filter(
-      answer =>
-        answer.isCorrect
-    ).length;
-
-  const wrongAnswers =
-    session.answers.filter(
-      answer =>
-        !answer.isCorrect
-    ).length;
-
-  const result = {
-    studentId: chatId,
-    studentName:
-      session.studentName,
-
-    score:
-      session.score,
-
-    total:
-      total,
-
-    percentage:
-      percentage,
-
-    correctAnswers:
-      correctAnswers,
-
-    wrongAnswers:
-      wrongAnswers,
-
-    answers:
-      session.answers,
-
-    createdAt:
-      new Date().toISOString()
-  };
-
-  exam.results.push(result);
-
-  sessions.delete(chatId);
-
-  await sendMessage(
-    chatId,
-    `🎉 QORMAATA XUMURTE!
-
-👤 Maqaa:
-${session.studentName}
-
-📊 BU'AA
-
-✅ Qabxii:
-${session.score}/${total}
-
-📈 Dhibbeentaa:
-${percentage}%
-
-✅ Sirrii:
-${correctAnswers}
-
-❌ Dogoggoraa:
-${wrongAnswers}
-
-Galatoomi Waamara fayyadamuu keetiif!`,
-    mainMenu()
-  );
-}
-
-// ======================================================
-// SHOW RESULTS
-// ======================================================
-
-async function showMyResults(
-  chatId
-) {
-
-  const results = [];
-
-  for (
-    const exam of exams.values()
-  ) {
-
-    for (
-      const result of exam.results
-    ) {
-
-      if (
-        result.studentId === chatId
-      ) {
-
-        results.push({
-          exam:
-            exam.title,
-
-          subject:
-            exam.subject,
-
-          studentName:
-            result.studentName,
-
-          score:
-            result.score,
-
-          total:
-            result.total,
-
-          percentage:
-            result.percentage,
-
-          correctAnswers:
-            result.correctAnswers,
-
-          wrongAnswers:
-            result.wrongAnswers,
-
-          createdAt:
-            result.createdAt
-        });
-      }
-    }
-  }
-
-  if (results.length === 0) {
-
-    await sendMessage(
-      chatId,
-      `📊 QABXII KOO
-
-Ammaaf qormaata ati fudhatte hin jiru.`,
-      mainMenu()
-    );
-
-    return;
-  }
-
-  let text =
-    "📊 QABXII KOO\n\n";
-
-  results.forEach(
-    (result, index) => {
-
-      text +=
-        `${index + 1}. ${result.exam}\n` +
-        `📚 ${result.subject}\n` +
-        `👤 ${result.studentName}\n` +
-        `✅ ${result.score}/${result.total}\n` +
-        `📈 ${result.percentage}%\n` +
-        `✔️ Sirrii: ${result.correctAnswers}\n` +
-        `❌ Dogoggoraa: ${result.wrongAnswers}\n\n`;
-    }
-  );
-
-  await sendMessage(
-    chatId,
-    text,
-    mainMenu()
-  );
-}
-
-// ======================================================
-// HELPERS
-// ======================================================
-
-function countCreatedExams(
-  chatId
-) {
-
-  let count = 0;
-
-  for (
-    const exam of exams.values()
-  ) {
-
-    if (
-      exam.creatorId === chatId
-    ) {
-      count++;
-    }
-  }
-
-  return count;
-}
-
-function countTakenExams(
-  chatId
-) {
-
-  let count = 0;
-
-  for (
-    const exam of exams.values()
-  ) {
-
-    for (
-      const result of exam.results
-    ) {
-
-      if (
-        result.studentId === chatId
-      ) {
-        count++;
-      }
-    }
-  }
-
-  return count;
-}
-
-// ======================================================
-// START EXPRESS SERVER
-// ======================================================
-
-app.listen(
-  PORT,
-  "0.0.0.0",
-  () => {
-
-    console.log(
-      `🌐 Waamara server running on port ${PORT}`
-    );
-
-    console.log(
-      `❤️ Health: /health`
-    );
-  }
-);
-
-// ======================================================
-// START TELEGRAM BOT
-// ======================================================
-
-startBot();
+start();
