@@ -1,3087 +1,896 @@
 const express = require("express");
-const https = require("https");
-const { Pool } = require("pg");
 
 const app = express();
-app.use(express.json());
-
 const PORT = process.env.PORT || 10000;
+
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const DATABASE_URL = process.env.DATABASE_URL;
+const RENDER_URL = (process.env.RENDER_EXTERNAL_URL || "").replace(/\/+$/, "");
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 
-if (!BOT_TOKEN) {
-  console.error("❌ TELEGRAM_BOT_TOKEN hin argamne.");
-}
+app.use(express.json({ limit: "1mb" }));
 
-if (!DATABASE_URL) {
-  console.error("❌ DATABASE_URL hin argamne.");
-}
+// ========================================
+// WAAMARA BOT - SEENAA NABIYYOOTAA
+// Afaan Oromoo fi Afaan Arabaa
+// ========================================
 
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
+const MAIN_MENU = {
+  keyboard: [
+    [{ text: "📚 Seenaa Nabiyyootaa" }, { text: "🤍 Seenaa Sahaabota" }],
+    [{ text: "🌙 Seenaa Nabiyyii ﷺ" }, { text: "👩 Dubartoota Sahaabota" }],
+    [{ text: "🕌 Barnoota Islaamaa" }, { text: "❓ Gaaffii fi Deebii" }],
+    [{ text: "ℹ️ Waa'ee Botichaa" }]
+  ],
+  resize_keyboard: true
+};
+
+// ========================================
+// SEENAA NABIYYOOTA 25
+// ========================================
+
+const PROPHETS = [
+  {
+    id: "adam",
+    name: "Aadam (آدم عليه السلام)",
+    om: "Aadam عليه السلام nama jalqabaa fi abbaa ilmaan namaa ti. Rabbiin isa uume; maqaa wantootaa isa barsiise. Rabbiin isaaf fi haadha manaa isaa Hawwaa jannata keessa jiraachuu ajaje. Seenaa Aadam Qur'aana keessatti bakka garaagaraatti argina.",
+    ar: "آدم عليه السلام هو أبو البشر، خلقه الله وعلّمه الأسماء، وأسكنه الجنة مع زوجته. ثم تاب الله عليه بعد توبته. وردت قصته في مواضع متعددة من القرآن.",
+    lesson: "Tawbaa, ajaja Rabbiitiif ajajamuu fi araarama Rabbii abdachuu.",
+    ref: "البقرة 30-39، طه 115-123"
+  },
+  {
+    id: "idris",
+    name: "Idriis (إدريس عليه السلام)",
+    om: "Idriis عليه السلام Nabiyyii Rabbiin dhugaa fi nabiyyummaa isaatiin faarse dha. Qur'aanni isa dhugaa ba'aa fi Nabiyyii ta'uu isaa ibsa; bakka ol'aanaa geessuu isaas dubbata.",
+    ar: "إدريس عليه السلام نبيٌّ صدّيق، أثنى الله عليه بالصبر والصدق، وذكر أنه رفعه مكانًا عليًّا.",
+    lesson: "Dhugaa dubbachuu, obsuu fi hojii gaarii irratti cichuu.",
+    ref: "مريم 56-57، الأنبياء 85"
+  },
+  {
+    id: "nuh",
+    name: "Nuuh (نوح عليه السلام)",
+    om: "Nuuh عليه السلام ummata isaa yeroo dheeraaf gara Rabbiitti waame. Isaan keessaa namoonni muraasni amanan. Rabbiin amantoota doonii keessatti baraare; warri didan bishaaniin adabaman.",
+    ar: "دعا نوح عليه السلام قومه إلى عبادة الله زمنًا طويلًا، فكذّبه أكثرهم. فأمره الله بصنع السفينة، ونجّى المؤمنين وأهلك المكذبين بالطوفان.",
+    lesson: "Obsa, waamicha gara toltuutti itti fufuu fi Rabbiitti hirkachuu.",
+    ref: "سورة نوح، هود 25-49"
+  },
+  {
+    id: "hud",
+    name: "Huud (هود عليه السلام)",
+    om: "Huud عليه السلام gara ummata Aaditti ergaman. Ummanni isaanii humna isaanii boonu turan. Huud Rabbiin qofa akka gabbaran isaan waame; yeroo didan bubbee cimaadhaan adabaman.",
+    ar: "أرسل الله هودًا عليه السلام إلى قوم عاد، فدعاهم إلى توحيد الله وترك الكبر. فلما كذبوه أهلكهم الله بريح شديدة.",
+    lesson: "Of tuulummaa dhiisuu fi humna ofii irratti hin boonin.",
+    ref: "الأعراف 65-72، الحاقة 6-8"
+  },
+  {
+    id: "salih",
+    name: "Saalih (صالح عليه السلام)",
+    om: "Saalih عليه السلام ummata Samuuditti ergaman. Rabbiin gaala akka mallattoo taatu isaaniif kenne. Isaan garuu ajaja Rabbiitiin mormanii gaala sana miidhan; adabbii Rabbii isaan mudate.",
+    ar: "أرسل صالح عليه السلام إلى ثمود، وأيّد الله دعوته بالناقة آيةً لهم. لكنهم عقروها وكذّبوا نبيهم، فنزل بهم العذاب.",
+    lesson: "Mallattoolee Rabbii kabajuu fi ajaja isaa tuffachuu dhiisuu.",
+    ref: "الأعراف 73-79، الشمس 11-15"
+  },
+  {
+    id: "ibrahim",
+    name: "Ibraahiim (إبراهيم عليه السلام)",
+    om: "Ibraahiim عليه السلام Rabbiin qofa gabbaruu irratti cichan. Sanamoota ummata isaanii didan. Rabbiin ibidda isaan irratti qabbanaa'aa fi nagaa akka taatu godhe. Ibraahiim fi Ismaa'iil Ka'baa ijaaran.",
+    ar: "دعا إبراهيم عليه السلام قومه إلى التوحيد ورفض عبادة الأصنام. وجعل الله النار عليه بردًا وسلامًا. ورفع إبراهيم وإسماعيل قواعد البيت الحرام.",
+    lesson: "Tawhiida, iimaana cimaa fi Rabbiif ajajamuu.",
+    ref: "البقرة 124-129، الأنبياء 51-70"
+  },
+  {
+    id: "lut",
+    name: "Luux (لوط عليه السلام)",
+    om: "Luux عليه السلام ummata isaa gara qulqullummaa fi ajaja Rabbiitti waame. Isaan gorsa isaa didan. Rabbiin Luux fi maatii isaa keessaa warra amanan baraare; ummata isaa adabe.",
+    ar: "دعا لوط عليه السلام قومه إلى الطهارة وترك الفواحش، فكذبوه. فنجّى الله لوطًا وأهله المؤمنين، وأهلك القوم المجرمين.",
+    lesson: "Qulqullummaa, safuu fi gorsa haqaa fudhachuu.",
+    ref: "هود 77-83، الشعراء 160-175"
+  },
+  {
+    id: "ismail",
+    name: "Ismaa'iil (إسماعيل عليه السلام)",
+    om: "Ismaa'iil عليه السلام ilma Ibraahiim ti. Qur'aanni isa waadaa eegu, obsa qabu fi maatii isaa salaataa fi zakaa ajajuun faarsa. Inni abbaa isaa waliin Ka'baa ijaaruu keessatti hirmaate.",
+    ar: "إسماعيل عليه السلام ابن إبراهيم، وصفه الله بصدق الوعد والصبر، وكان يأمر أهله بالصلاة والزكاة، وشارك أباه في رفع قواعد الكعبة.",
+    lesson: "Waadaa eeguu, obsa qabaachuu fi maatii barsiisuu.",
+    ref: "مريم 54-55، البقرة 127"
+  },
+  {
+    id: "ishaq",
+    name: "Is'haaq (إسحاق عليه السلام)",
+    om: "Is'haaq عليه السلام ilma Ibraahiim fi abbaa Ya'aquub ti. Rabbiin Ibraahiim fi haadha manaa isaa Bishaaro Is'haaq kennuun gammachiise. Is'haaq Nabiyyii gaarii ture.",
+    ar: "إسحاق عليه السلام ابن إبراهيم، بشّر الله إبراهيم وزوجته به، وجعله نبيًّا من الصالحين.",
+    lesson: "Rahmata Rabbii abdachuu fi maatii gaarii ijaaruu.",
+    ref: "هود 71-73، الصافات 112-113"
+  },
+  {
+    id: "yaqub",
+    name: "Ya'aquub (يعقوب عليه السلام)",
+    om: "Ya'aquub عليه السلام ilma Is'haaq ti; abbaa Yuusuf ti. Ilma isaa Yuusuf irraa adda ba'ee gadda guddaa keessa jiraatus Rabbiin irraa abdii hin kutanne.",
+    ar: "يعقوب عليه السلام أبو يوسف، صبر على فراق ابنه ولم ييأس من رحمة الله، وقال إنه يشكو بثّه وحزنه إلى الله.",
+    lesson: "Obsa bareedaa qabaachuu fi rahmata Rabbii irraa abdii kutachuu dhiisuu.",
+    ref: "يوسف 83-87"
+  },
+  {
+    id: "yusuf",
+    name: "Yuusuf (يوسف عليه السلام)",
+    om: "Yuusuf عليه السلام obboloota isaa irraa rakkina arge; booda garbummaa fi hidhaa keessa darbe. Garuu Rabbiitti amanamee hamaa irraa of eeggata ture. Dhumarratti Rabbiin sadarkaa ol'aanaa isaaf kenne; obboloota isaa dhiiseef.",
+    ar: "ابتُلي يوسف عليه السلام بحسد إخوته ثم بالرق والسجن، لكنه صبر واتقى الله. ثم مكّنه الله في الأرض، وعفا عن إخوته.",
+    lesson: "Obsa, qulqullummaa, dhiifama fi Rabbiitti amanamuu.",
+    ref: "سورة يوسف"
+  },
+  {
+    id: "ayyub",
+    name: "Ayyuub (أيوب عليه السلام)",
+    om: "Ayyuub عليه السلام rakkina guddaa keessa darban. Garuu Rabbiin hin komanne; obsanii kadhatan. Rabbiin rakkoo isaanii irraa isaan fayyise.",
+    ar: "ابتُلي أيوب عليه السلام بالضر، فصبر ولجأ إلى الله بالدعاء، فكشف الله ضرّه وردّ عليه أهله ورحمته.",
+    lesson: "Yeroo rakkoo keessatti obsa qabaachuu fi Rabbiitti kadhachuu.",
+    ref: "الأنبياء 83-84، ص 41-44"
+  },
+  {
+    id: "shuayb",
+    name: "Shu'aayb (شعيب عليه السلام)",
+    om: "Shu'aayb عليه السلام ummata Madyanitti ergaman. Isaan safartuu fi madaallii keessatti haqa akka eeganiif gorsan; saamicha fi gowwoomsaa irraa isaan dhoowwan.",
+    ar: "أرسل شعيب عليه السلام إلى مدين، فأمرهم بعبادة الله وإيفاء الكيل والميزان وترك الغش والفساد.",
+    lesson: "Daldala keessatti amanamummaa fi haqa eeguu.",
+    ref: "هود 84-95"
+  },
+  {
+    id: "musa",
+    name: "Muusaa (موسى عليه السلام)",
+    om: "Muusaa عليه السلام Fira'awna fi Banii Israa'iilitti ergaman. Rabbiin Muusaa mallattoolee hedduudhaan deeggere. Muusaan ummata isaa Fira'awna jalaa baase; Rabbiin galaana qooduun isaan baraare.",
+    ar: "أرسل الله موسى عليه السلام إلى فرعون، وأيّده بالآيات. ثم أنجى الله موسى وبني إسرائيل من فرعون وشقّ لهم البحر.",
+    lesson: "Zulmii mormuu, haqarratti cichuu fi Rabbiitti hirkachuu.",
+    ref: "طه، القصص، الشعراء"
+  },
+  {
+    id: "harun",
+    name: "Haaruun (هارون عليه السلام)",
+    om: "Haaruun عليه السلام obboleessa Muusaa ti. Rabbiin isa Muusaa waliin ummata gara tawhiidaatti waamuuf erge. Inni gargaaraa fi Nabiyyii gaarii ture.",
+    ar: "هارون عليه السلام أخو موسى، جعله الله نبيًّا ووزيرًا لأخيه، فعاونه في دعوة فرعون وبني إسرائيل.",
+    lesson: "Obboleeyyan waliif gargaarsa ta'uu fi hojii gaarii keessatti wal deeggaruu.",
+    ref: "طه 29-36، مريم 53"
+  },
+  {
+    id: "dhulkifl",
+    name: "Dhulkifl (ذو الكفل عليه السلام)",
+    om: "Dhulkifl عليه السلام Qur'aana keessatti maqaan isaanii namoota obsa qaban fi gaggaarii waliin dubbatame. Tafsiirri maqaa kana irratti ibsa garaagaraa qaba; waan Qur'aanni ifatti hin ibsine murteessinee hin dubbannu.",
+    ar: "ذو الكفل ذُكر في القرآن مع الصابرين والأخيار. ولم يذكر القرآن تفاصيل كثيرة عن قصته، لذلك لا نجزم بتفاصيل لم تثبت.",
+    lesson: "Obsa qabaachuu fi hojii gaarii irratti cichuu.",
+    ref: "الأنبياء 85-86، ص 48"
+  },
+  {
+    id: "dawud",
+    name: "Daawud (داود عليه السلام)",
+    om: "Daawud عليه السلام Nabiyyii fi mootii ture. Rabbiin isaaf Zabuur kenne. Inni haqa irratti murteessa, Rabbiin faarsa ture; hojii fi murtii keessatti haqa eeguun beekama.",
+    ar: "آتَى الله داود عليه السلام الملك والحكمة والزبور، وأمره بالعدل في الحكم، وكان كثير العبادة والتسبيح.",
+    lesson: "Haqaan murteessuu, Rabbiin faarsuu fi amanamummaa.",
+    ref: "ص 17-26، الإسراء 55"
+  },
+  {
+    id: "sulayman",
+    name: "Sulaymaan (سليمان عليه السلام)",
+    om: "Sulaymaan عليه السلام ilma Daawud ti. Rabbiin mootummaa fi beekumsa guddaa isaaf kenne. Inni uumamtoota Rabbiin isaaf kenne sirnaan bulche; qophii fi murtii isaa keessatti hikmaa agarsiise.",
+    ar: "سليمان عليه السلام ابن داود، آتاه الله ملكًا عظيمًا وعلّمه، وسخّر له الريح والجن بإذن الله، وكان شاكرًا لنعمة ربه.",
+    lesson: "Nim'a Rabbii irratti galata galchuu fi aangoo haqaaf fayyadamuu.",
+    ref: "النمل 15-44، ص 30-40"
+  },
+  {
+    id: "ilyas",
+    name: "Ilyaas (إلياس عليه السلام)",
+    om: "Ilyaas عليه السلام ummata isaa gara Rabbiitti waame; waaqeffannaa Ba'al irraa isaan dhoowwe. Rabbiin isa nageenyaan faarsa.",
+    ar: "دعا إلياس عليه السلام قومه إلى عبادة الله وحده وترك عبادة بعل، فذكره الله في عباده المؤمنين.",
+    lesson: "Tawhiida irratti cichuu fi shirkii irraa fagaachuu.",
+    ref: "الصافات 123-132"
+  },
+  {
+    id: "alyasa",
+    name: "Al-Yasa'a (اليسع عليه السلام)",
+    om: "Al-Yasa'a عليه السلام Qur'aana keessatti maqaan isaanii Nabiyyoota gaggaarii keessaa dubbatame. Qur'aanni seenaa isaanii bal'inaan hin ibsu; kanaaf waan mirkanaa'e qofa ni dubbanna.",
+    ar: "اليسع عليه السلام من الأنبياء الذين ذكرهم الله في القرآن ضمن الأخيار، ولم تُذكر تفاصيل كثيرة عن قصته.",
+    lesson: "Namoota gaggaarii hordofuu fi ajaja Rabbiitti ajajamuu.",
+    ref: "الأنعام 86، ص 48"
+  },
+  {
+    id: "yunus",
+    name: "Yuunus (يونس عليه السلام)",
+    om: "Yuunus عليه السلام ummata isaa biraa ba'anii, booda gara rakkoo guddaa seene. Gara Rabbiitti tawbaa fi kadhannaa godhe. Rabbiin isa baraare; ummanni isaas amanee fayyadame.",
+    ar: "ذهب يونس عليه السلام مغاضبًا، فابتلعه الحوت، فنادى ربه في الظلمات، فاستجاب الله له ونجّاه. وآمن قومه فانتفعوا بإيمانهم.",
+    lesson: "Yeroo rakkinaa Rabbiin kadhachuu fi tawbaa gochuu.",
+    ref: "الأنبياء 87-88، سورة يونس 98"
+  },
+  {
+    id: "zakariya",
+    name: "Zakariyyaa (زكريا عليه السلام)",
+    om: "Zakariyyaa عليه السلام Rabbiin ilma gaarii akka isaaf kennu kadhate. Umuriin isaanii guddaa ta'us, Rabbiin Yahyaa isaaf kenne.",
+    ar: "دعا زكريا عليه السلام ربه أن يهب له ولدًا صالحًا، فاستجاب الله دعاءه وبشّره بيحيى.",
+    lesson: "Du'aa'ii gochuu fi rahmata Rabbii abdachuu.",
+    ref: "آل عمران 38-41، مريم 2-11"
+  },
+  {
+    id: "yahya",
+    name: "Yahyaa (يحيى عليه السلام)",
+    om: "Yahyaa عليه السلام ilma Zakariyyaa ti. Rabbiin isa ijoollummaa irraa ogummaa fi qulqullummaa kenneef. Inni Nabiyyii gaggaarii fi abbaa haqaati.",
+    ar: "يحيى عليه السلام ابن زكريا، آتاه الله الحكم صبيًّا، وكان تقيًّا بارًّا بوالديه ولم يكن جبارًا عصيًّا.",
+    lesson: "Qulqullummaa, kabaja maatii fi beekumsa barbaaduu.",
+    ref: "مريم 12-15"
+  },
+  {
+    id: "isa",
+    name: "Iisaa (عيسى عليه السلام)",
+    om: "Iisaa عليه السلام ilma Maryam ti. Rabbiin isa abbaa malee uume; mallattoolee isaaf kenne. Iisaa ummata gara Rabbiitti waame. Akka amantii Islaamaatti Iisaa Nabiyyii Rabbiiti; Rabbiin hin ta'u.",
+    ar: "عيسى ابن مريم عبد الله ورسوله، خلقه الله من غير أب، وأيّده بالمعجزات بإذن الله، ودعا بني إسرائيل إلى عبادة الله وحده.",
+    lesson: "Rabbiin qofa gabbaruu, qulqullummaa fi rahmata.",
+    ref: "آل عمران 45-59، مريم 16-36"
+  },
+  {
+    id: "muhammad",
+    name: "Muhammad ﷺ (محمد صلى الله عليه وسلم)",
+    om: "Muhammad ﷺ Nabiyyii fi Ergaa Rabbii isa dhumaa dha. Makkaa keessatti dhalatan. Umrii waggaa 40tti wahyiin jalqabame. Booda Madiinaatti hijraa godhan. Qur'aanni isaan irratti bu'e; ummata tawhiida, haqa, rahmata fi amala gaariitti waaman.",
+    ar: "محمد صلى الله عليه وسلم خاتم الأنبياء والمرسلين. وُلد بمكة، ونزل عليه الوحي وهو ابن أربعين سنة، ثم هاجر إلى المدينة، وبلّغ رسالة الإسلام ودعا إلى التوحيد والرحمة ومكارم الأخلاق.",
+    lesson: "Sunnah isaanii hordofuu, rahmata qabaachuu fi amala gaarii qabaachuu.",
+    ref: "الأحزاب 40، العلق 1-5، التوبة 128"
+  },
+  {
+    id: "ismail_extra",
+    name: "Yaadannoo: Nabiyyoota 25",
+    om: "Maqaaleen Nabiyyoota 25 Qur'aana keessatti beekaman: Aadam, Idriis, Nuuh, Huud, Saalih, Ibraahiim, Luux, Ismaa'iil, Is'haaq, Ya'aquub, Yuusuf, Ayyuub, Shu'aayb, Muusaa, Haaruun, Dhulkifl, Daawud, Sulaymaan, Ilyaas, Al-Yasa'a, Yuunus, Zakariyyaa, Yahyaa, Iisaa fi Muhammad ﷺ.",
+    ar: "الأنبياء الخمسة والعشرون المذكورون بأسمائهم في القرآن: آدم، إدريس، نوح، هود، صالح، إبراهيم، لوط، إسماعيل، إسحاق، يعقوب، يوسف، أيوب، شعيب، موسى، هارون، ذو الكفل، داود، سليمان، إلياس، اليسع، يونس، زكريا، يحيى، عيسى، ومحمد صلى الله عليهم وسلم.",
+    lesson: "Maqaalee Nabiyyoota Qur'aana keessatti dubbataman irra deebi'ii baradhu.",
+    ref: "القرآن الكريم"
   }
-});
+];
 
-/* =====================================================
-   SESSION
-===================================================== */
+// ========================================
+// SEENAA SAHAABOTAA
+// ========================================
 
-const sessions = new Map();
+const COMPANIONS = [
+  {
+    id: "abu_bakr",
+    name: "Abuu Bakr (أبو بكر الصديق رضي الله عنه)",
+    om: "Abuu Bakr رضي الله عنه hiriyyaa dhihoo Nabiyyii Muhammad ﷺ fi namoota jalqaba amanan keessaa tokko ture. Hijraa keessatti Nabiyyii waliin ture. Erga Nabiyyii ﷺ du'anii booda Khaliifaa jalqabaa ta'e.",
+    ar: "أبو بكر الصديق رضي الله عنه صاحب النبي ﷺ وأول الخلفاء الراشدين. رافق النبي في الهجرة، وعُرف بالصدق والإيمان والثبات.",
+    lesson: "Dhugaa dubbachuu, amanamummaa fi hiriyyaa gaarii ta'uu."
+  },
+  {
+    id: "umar",
+    name: "Umar ibn Al-Khattaab (عمر بن الخطاب رضي الله عنه)",
+    om: "Umar رضي الله عنه Khaliifaa lammaffaa ture. Haqa, murtii sirrii fi bulchiinsa cimaadhaan beekama. Muslimootaaf tajaajila guddaa kenne.",
+    ar: "عمر بن الخطاب رضي الله عنه ثاني الخلفاء الراشدين، اشتهر بالعدل والقوة في الحق، وعمل على إقامة العدل ورعاية شؤون المسلمين.",
+    lesson: "Haqa eeguu, itti gaafatamummaa fi nama hundaaf haqa ta'uu."
+  },
+  {
+    id: "uthman",
+    name: "Usmaan ibn Affaan (عثمان بن عفان رضي الله عنه)",
+    om: "Usmaan رضي الله عنه Khaliifaa sadaffaa ture. Qabeenya isaa hojii toltuu keessatti baase. Qur'aana walitti qindeessuu fi koppii isaa babal'isuu keessatti gahee guddaa qaba.",
+    ar: "عثمان بن عفان رضي الله عنه ثالث الخلفاء الراشدين، عُرف بالحياء والكرم، وكان له دور عظيم في نسخ المصاحف وإرسالها إلى الأمصار.",
+    lesson: "Arjummaa, haya'ii fi Qur'aana tajaajiluu."
+  },
+  {
+    id: "ali",
+    name: "Alii ibn Abii Xaalib (علي بن أبي طالب رضي الله عنه)",
+    om: "Alii رضي الله عنه ilma abbeeraa Nabiyyii ﷺ fi abbaa manaa Faaximaa ture. Beekumsa, gootummaa fi murtii sirriidhaan beekama. Khaliifaa afraffaa ture.",
+    ar: "علي بن أبي طالب رضي الله عنه ابن عم النبي ﷺ وزوج فاطمة، ورابع الخلفاء الراشدين. اشتهر بالشجاعة والعلم والحكمة.",
+    lesson: "Beekumsa barbaaduu, gootummaa fi hikmaa.",
+  },
+  {
+    id: "bilal",
+    name: "Bilaal ibn Rabaah (بلال بن رباح رضي الله عنه)",
+    om: "Bilaal رضي الله عنه Muslimoota jalqabaa keessaa ture. Sababa iimaana isaatiin rakkina arge; garuu tawhiida irratti ciche. Booda mu'azzina Nabiyyii ﷺ ta'e.",
+    ar: "بلال بن رباح رضي الله عنه من السابقين إلى الإسلام، تحمّل الأذى بسبب إيمانه وثبت على التوحيد، وكان من أشهر مؤذني النبي ﷺ.",
+    lesson: "Iimaana irratti cichuu fi rakkoo keessatti obsa qabaachuu."
+  },
+  {
+    id: "khadija",
+    name: "Khadiijaa (خديجة رضي الله عنها)",
+    om: "Khadiijaa رضي الله عنها haadha manaa jalqabaa Nabiyyii Muhammad ﷺ ti. Yeroo wahyiin jalqabu Nabiyyii deeggarte; qabeenya, jaalala fi gorsa isaaniif kennite.",
+    ar: "خديجة رضي الله عنها زوجة النبي ﷺ الأولى، آزرته عند نزول الوحي، وكانت مثالًا في الإيمان والوفاء والبذل.",
+    lesson: "Nama gaarii deeggaruu, amanamummaa fi obsa.",
+  },
+  {
+    id: "aisha",
+    name: "Aa'ishaa (عائشة رضي الله عنها)",
+    om: "Aa'ishaa رضي الله عنها haadha mu'mintootaa fi haadha manaa Nabiyyii ﷺ ti. Hadiisa hedduu dabarsite; Muslimoonni beekumsa amantii irraa baratan.",
+    ar: "عائشة رضي الله عنها أم المؤمنين، نقلت أحاديث كثيرة عن النبي ﷺ، وكانت من أعلم النساء في الفقه والحديث.",
+    lesson: "Beekumsa barachuu fi beekumsa sirriitti dabarsuu.",
+  },
+  {
+    id: "fatima",
+    name: "Faaximaa (فاطمة رضي الله عنها)",
+    om: "Faaximaa رضي الله عنها intala Nabiyyii Muhammad ﷺ ti. Amala gaarii, salphina jireenyaa fi jaalala maatii irratti fakkeenya gaarii turte.",
+    ar: "فاطمة رضي الله عنها ابنة النبي ﷺ، عُرفت بالفضل والقرب من أبيها، وكانت مثالًا في الصبر والعبادة والاهتمام بالأسرة.",
+    lesson: "Maatii kabajuu, salphina jireenyaa fi amala gaarii.",
+  },
+  {
+    id: "abdurrahman",
+    name: "Abdur-Rahmaan ibn Awf (عبد الرحمن بن عوف رضي الله عنه)",
+    om: "Abdur-Rahmaan ibn Awf رضي الله عنه Sahaabaa beekamaa fi daldalaa amanamaa ture. Qabeenya isaa hojii toltuu fi gargaaruu Muslimootaaf baase.",
+    ar: "عبد الرحمن بن عوف رضي الله عنه من كبار الصحابة، عُرف بالتجارة والأمانة والإنفاق في سبيل الله ومساعدة المحتاجين.",
+    lesson: "Hojii amanamaa, arjummaa fi gargaaruu namoota rakkatan.",
+  },
+  {
+    id: "salman",
+    name: "Salmaan Al-Faarisii (سلمان الفارسي رضي الله عنه)",
+    om: "Salmaan Al-Faarisii رضي الله عنه dhugaa barbaaduuf imala dheeraa godhe; dhumarratti Islaama fudhate. Yaada isaa waraana Khandaq keessatti dhiheesse.",
+    ar: "سلمان الفارسي رضي الله عنه بحث عن الحق حتى هداه الله إلى الإسلام، وأشار بحفر الخندق في غزوة الأحزاب.",
+    lesson: "Dhugaa barbaaduu, barachuu fi yaada gaarii dhiheessuu.",
+  },
+  {
+    id: "khalid",
+    name: "Khaalid ibn Al-Waliid (خالد بن الوليد رضي الله عنه)",
+    om: "Khaalid ibn Al-Waliid رضي الله عنه ajajaa waraanaa beekamaa ture. Islaama erga fudhatee booda Muslimootaaf tajaajila guddaa kenne; gootummaa fi dandeettii hoggansaan beekama.",
+    ar: "خالد بن الوليد رضي الله عنه قائد عسكري مشهور، أسلم وخدم المسلمين، وعُرف بالشجاعة وحسن القيادة.",
+    lesson: "Dandeettii ofii hojii gaarii fi tajaajilaaf fayyadamuu.",
+  },
+  {
+    id: "zayd",
+    name: "Zayd ibn Haarithaa (زيد بن حارثة رضي الله عنه)",
+    om: "Zayd ibn Haarithaa رضي الله عنه Sahaabaa Nabiyyii ﷺ biratti jaallatamaa ture. Qur'aana keessatti maqaan Sahaabaa ifatti dubbatame isa qofa.",
+    ar: "زيد بن حارثة رضي الله عنه من أصحاب النبي ﷺ، وكان محبوبًا عنده، وهو الصحابي الوحيد الذي ذُكر اسمه صراحة في القرآن.",
+    lesson: "Amanamummaa, jaalala fi hojii gaarii.",
+  }
+];
 
-/*
-session examples:
+// ========================================
+// BARNOOTA ISLAAMAA
+// ========================================
 
-Create:
-{
-  step,
-  title,
-  subject,
-  duration,
-  examId,
-  examCode,
-  question,
-  options,
-  correctAnswer,
-  points
+const LESSONS = [
+  {
+    id: "islam",
+    name: "أركان الإسلام - Arkaana Islaamaa",
+    om: "Arkaanni Islaamaa shan:\n1. Shahadaa ragaa bahuu.\n2. Salaata salaatuu.\n3. Zakaa kennuu.\n4. Ji'a Ramadaanaa soomuu.\n5. Nama dandeettii qabuuf Hajjii deemuu.",
+    ar: "أركان الإسلام خمسة: شهادة أن لا إله إلا الله وأن محمدًا رسول الله، وإقام الصلاة، وإيتاء الزكاة، وصوم رمضان، وحج البيت لمن استطاع إليه سبيلًا."
+  },
+  {
+    id: "iman",
+    name: "أركان الإيمان - Arkaana Iimaanaa",
+    om: "Arkaanni Iimaanaa ja'a:\n1. Rabbiitti amanuu.\n2. Malaa'ikoota isaatti amanuu.\n3. Kitaabota isaatti amanuu.\n4. Ergamtoota isaatti amanuu.\n5. Guyyaa Qiyaamaatti amanuu.\n6. Qadara gaarii fi hamaa Rabbiirraa ta'uu amanuu.",
+    ar: "أركان الإيمان ستة: الإيمان بالله، وملائكته، وكتبه، ورسله، واليوم الآخر، والقدر خيره وشره."
+  },
+  {
+    id: "salah",
+    name: "الصلاة - Salaata",
+    om: "Salaanni utubaa amantii Islaamaa keessaa isa guddaa dha. Salaata shanan yeroo isaanii keessatti, shuruutii fi arkaana isaanii eegnee salaatuun barbaachisaa dha. Akkaataa salaataa sirriitti barachuuf barsiisaa amanamaa irraa baradhu.",
+    ar: "الصلاة من أعظم شعائر الإسلام، ويجب أداء الصلوات الخمس في أوقاتها مع مراعاة شروطها وأركانها. ويُتعلم أداؤها الصحيح من أهل العلم الموثوقين."
+  }
+];
+
+// ========================================
+// GAAFFII FI DEEBII
+// ========================================
+
+const QUIZ = [
+  {
+    q: "Nabiyyii dhumaa eenyu?",
+    a: ["Muusaa عليه السلام", "Iisaa عليه السلام", "Muhammad ﷺ"],
+    correct: 2,
+    ar: "من هو خاتم الأنبياء؟"
+  },
+  {
+    q: "Nabiyyii galaana keessatti rakkoo arge eenyu?",
+    a: ["Yuunus عليه السلام", "Yuusuf عليه السلام", "Idriis عليه السلام"],
+    correct: 0,
+    ar: "من النبي الذي التقمه الحوت؟"
+  },
+  {
+    q: "Khaliifaan jalqabaa eenyu?",
+    a: ["Umar رضي الله عنه", "Abuu Bakr رضي الله عنه", "Alii رضي الله عنه"],
+    correct: 1,
+    ar: "من أول الخلفاء الراشدين؟"
+  },
+  {
+    q: "Nabiyyii Muusaa obboleessi isaa eenyu?",
+    a: ["Haaruun عليه السلام", "Daawud عليه السلام", "Ismaa'iil عليه السلام"],
+    correct: 0,
+    ar: "من أخو موسى عليه السلام؟"
+  },
+  {
+    q: "Arkaanni Islaamaa meeqa?",
+    a: ["Shan", "Ja'a", "Torba"],
+    correct: 0,
+    ar: "كم عدد أركان الإسلام؟"
+  },
+  {
+    q: "Nabiyyii Ka'baa waliin ijaare ilma isaa eenyu?",
+    a: ["Yuusuf عليه السلام", "Ismaa'iil عليه السلام", "Yahyaa عليه السلام"],
+    correct: 1,
+    ar: "من ابن إبراهيم الذي شاركه في رفع قواعد الكعبة؟"
+  }
+];
+
+// ========================================
+// TELEGRAM API
+// ========================================
+
+async function telegram(method, body = {}) {
+  if (!BOT_TOKEN) {
+    throw new Error("TELEGRAM_BOT_TOKEN hin kaa'amne.");
+  }
+
+  const response = await fetch(
+    `https://api.telegram.org/bot${BOT_TOKEN}/${method}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }
+  );
+
+  const data = await response.json();
+
+  if (!data.ok) {
+    console.error("Telegram API error:", data);
+  }
+
+  return data;
 }
 
-Take:
-{
-  step: "taking_exam",
-  examId,
-  examCode,
-  examTitle,
-  duration,
-  attemptId,
-  questions,
-  questionIndex,
-  answers
-}
-*/
-
-/* =====================================================
-   TELEGRAM API
-===================================================== */
-
-function telegram(method, data = {}) {
-  return new Promise((resolve, reject) => {
-
-    const body = JSON.stringify(data);
-
-    const req = https.request(
-      {
-        hostname: "api.telegram.org",
-        path: `/bot${BOT_TOKEN}/${method}`,
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(body)
-        }
-      },
-      (res) => {
-
-        let result = "";
-
-        res.on("data", (chunk) => {
-          result += chunk;
-        });
-
-        res.on("end", () => {
-
-          try {
-
-            const json = JSON.parse(result);
-
-            if (!json.ok) {
-              reject(
-                new Error(
-                  json.description ||
-                  "Telegram API error"
-                )
-              );
-              return;
-            }
-
-            resolve(json.result);
-
-          } catch (err) {
-            reject(err);
-          }
-
-        });
-      }
-    );
-
-    req.on("error", reject);
-
-    req.write(body);
-    req.end();
+async function sendMessage(chatId, text, extra = {}) {
+  return telegram("sendMessage", {
+    chat_id: chatId,
+    text,
+    ...extra
   });
 }
 
-async function sendMessage(
-  chatId,
-  text,
-  extra = {}
-) {
-  return telegram(
-    "sendMessage",
-    {
-      chat_id: chatId,
-      text,
-      ...extra
-    }
-  );
-}
-
-async function answerCallback(
-  callbackQueryId,
-  text = ""
-) {
-
-  try {
-
-    await telegram(
-      "answerCallbackQuery",
-      {
-        callback_query_id:
-          callbackQueryId,
-        text
-      }
-    );
-
-  } catch (err) {
-
-    console.error(
-      "❌ Callback error:",
-      err.message
-    );
-  }
-}
-
-/* =====================================================
-   KEYBOARDS
-===================================================== */
-
-function mainKeyboard() {
-
-  return {
-    keyboard: [
-      [
-        {
-          text: "📝 Qormaata Uumi"
-        },
-        {
-          text: "📖 Qormaata Fudhadhu"
-        }
-      ],
-      [
-        {
-          text: "📊 Qabxii Koo"
-        },
-        {
-          text: "👨‍🏫 Qormaata Koo"
-        }
-      ],
-      [
-        {
-          text: "📚 Barnoota"
-        },
-        {
-          text: "👤 Profile"
-        }
-      ],
-      [
-        {
-          text: "💼 Hojiiwwan Biroo"
-        }
-      ]
-    ],
-    resize_keyboard: true,
-    is_persistent: true
-  };
-}
-
-function cancelKeyboard() {
-
-  return {
-    keyboard: [
-      [
-        {
-          text: "❌ Haqi"
-        }
-      ]
-    ],
-    resize_keyboard: true
-  };
-}
-
-/* =====================================================
-   DATABASE MIGRATION
-===================================================== */
-
-async function migrateDatabase() {
-
-  console.log(
-    "🔄 Database migration started..."
-  );
-
-  /* USERS */
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      telegram_id BIGINT UNIQUE,
-      first_name TEXT,
-      username TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  /* USERS ID */
-
-  await pool.query(`
-    DO $$
-    BEGIN
-
-      IF EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_name = 'users'
-        AND column_name = 'id'
-        AND column_default IS NULL
-      ) THEN
-
-        CREATE SEQUENCE IF NOT EXISTS users_id_seq;
-
-        PERFORM setval(
-          'users_id_seq',
-          COALESCE(
-            (SELECT MAX(id) FROM users),
-            0
-          ) + 1,
-          false
-        );
-
-        ALTER TABLE users
-        ALTER COLUMN id
-        SET DEFAULT nextval('users_id_seq');
-
-        ALTER SEQUENCE users_id_seq
-        OWNED BY users.id;
-
-      END IF;
-
-    END
-    $$;
-  `);
-
-  /* EXAMS */
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS exams (
-      id SERIAL PRIMARY KEY,
-      code VARCHAR(20) UNIQUE NOT NULL,
-      title TEXT NOT NULL,
-      subject TEXT,
-      duration INTEGER DEFAULT 30,
-      teacher_id BIGINT,
-      creator_id BIGINT,
-      starts_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      ends_at TIMESTAMP,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  await pool.query(`
-    ALTER TABLE exams
-    ADD COLUMN IF NOT EXISTS duration INTEGER DEFAULT 30
-  `);
-
-  await pool.query(`
-    ALTER TABLE exams
-    ADD COLUMN IF NOT EXISTS teacher_id BIGINT
-  `);
-
-  await pool.query(`
-    ALTER TABLE exams
-    ADD COLUMN IF NOT EXISTS creator_id BIGINT
-  `);
-
-  await pool.query(`
-    UPDATE exams
-    SET creator_id = teacher_id
-    WHERE creator_id IS NULL
-    AND teacher_id IS NOT NULL
-  `);
-
-  /* QUESTIONS */
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS questions (
-      id SERIAL PRIMARY KEY,
-      exam_id INTEGER,
-      question_text TEXT,
-      correct_answer TEXT,
-      points INTEGER DEFAULT 1
-    )
-  `);
-
-  await pool.query(`
-    ALTER TABLE questions
-    ADD COLUMN IF NOT EXISTS exam_id INTEGER
-  `);
-
-  await pool.query(`
-    ALTER TABLE questions
-    ADD COLUMN IF NOT EXISTS question_text TEXT
-  `);
-
-  await pool.query(`
-    ALTER TABLE questions
-    ADD COLUMN IF NOT EXISTS correct_answer TEXT
-  `);
-
-  await pool.query(`
-    ALTER TABLE questions
-    ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 1
-  `);
-
-  /* OPTIONS */
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS options (
-      id SERIAL PRIMARY KEY,
-      question_id INTEGER,
-      option_key VARCHAR(5),
-      option_text TEXT
-    )
-  `);
-
-  await pool.query(`
-    ALTER TABLE options
-    ADD COLUMN IF NOT EXISTS question_id INTEGER
-  `);
-
-  await pool.query(`
-    ALTER TABLE options
-    ADD COLUMN IF NOT EXISTS option_key VARCHAR(5)
-  `);
-
-  await pool.query(`
-    ALTER TABLE options
-    ADD COLUMN IF NOT EXISTS option_text TEXT
-  `);
-
-  /* ATTEMPTS */
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS attempts (
-      id SERIAL PRIMARY KEY,
-      exam_id INTEGER,
-      student_id BIGINT,
-      student_name TEXT,
-      score INTEGER DEFAULT 0,
-      total INTEGER DEFAULT 0,
-      percentage NUMERIC DEFAULT 0,
-      started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      finished_at TIMESTAMP,
-      expires_at TIMESTAMP
-    )
-  `);
-
-  await pool.query(`
-    ALTER TABLE attempts
-    ADD COLUMN IF NOT EXISTS exam_id INTEGER
-  `);
-
-  await pool.query(`
-    ALTER TABLE attempts
-    ADD COLUMN IF NOT EXISTS student_id BIGINT
-  `);
-
-  await pool.query(`
-    ALTER TABLE attempts
-    ADD COLUMN IF NOT EXISTS student_name TEXT
-  `);
-
-  await pool.query(`
-    ALTER TABLE attempts
-    ADD COLUMN IF NOT EXISTS score INTEGER DEFAULT 0
-  `);
-
-  await pool.query(`
-    ALTER TABLE attempts
-    ADD COLUMN IF NOT EXISTS total INTEGER DEFAULT 0
-  `);
-
-  await pool.query(`
-    ALTER TABLE attempts
-    ADD COLUMN IF NOT EXISTS percentage NUMERIC DEFAULT 0
-  `);
-
-  await pool.query(`
-    ALTER TABLE attempts
-    ADD COLUMN IF NOT EXISTS started_at
-    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  `);
-
-  await pool.query(`
-    ALTER TABLE attempts
-    ADD COLUMN IF NOT EXISTS finished_at TIMESTAMP
-  `);
-
-  await pool.query(`
-    ALTER TABLE attempts
-    ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP
-  `);
-
-  /* ANSWERS */
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS answers (
-      id SERIAL PRIMARY KEY,
-      attempt_id INTEGER,
-      question_id INTEGER,
-      answer TEXT,
-      is_correct BOOLEAN DEFAULT FALSE
-    )
-  `);
-
-  await pool.query(`
-    ALTER TABLE answers
-    ADD COLUMN IF NOT EXISTS attempt_id INTEGER
-  `);
-
-  await pool.query(`
-    ALTER TABLE answers
-    ADD COLUMN IF NOT EXISTS question_id INTEGER
-  `);
-
-  await pool.query(`
-    ALTER TABLE answers
-    ADD COLUMN IF NOT EXISTS answer TEXT
-  `);
-
-  await pool.query(`
-    ALTER TABLE answers
-    ADD COLUMN IF NOT EXISTS is_correct BOOLEAN DEFAULT FALSE
-  `);
-
-  console.log(
-    "✅ Database migration completed."
-  );
-}
-
-/* =====================================================
-   SAVE USER
-===================================================== */
-
-async function saveUser(user) {
-
-  if (!user || !user.id) return;
-
-  await pool.query(
-    `
-    INSERT INTO users
-    (
-      telegram_id,
-      first_name,
-      username
-    )
-    VALUES
-    ($1, $2, $3)
-
-    ON CONFLICT (telegram_id)
-    DO UPDATE SET
-      first_name = EXCLUDED.first_name,
-      username = EXCLUDED.username
-    `,
-    [
-      user.id,
-      user.first_name || "",
-      user.username || ""
-    ]
-  );
-}
-
-/* =====================================================
-   EXAM CODE
-===================================================== */
-
-function generateExamCode() {
-
-  const chars =
-    "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-  let code = "";
-
-  for (let i = 0; i < 6; i++) {
-    code +=
-      chars[
-        Math.floor(
-          Math.random() * chars.length
-        )
-      ];
-  }
-
-  return code;
-}
-
-/* =====================================================
-   START
-===================================================== */
-
-async function handleStart(msg) {
-
-  const chatId = msg.chat.id;
-
-  await saveUser(msg.from);
-
-  sessions.delete(chatId);
-
-  await sendMessage(
-    chatId,
-    `👋 Baga nagaan dhuftan gara Waamara!
-
-📚 WAAMARA BOT
-
-Tajaajiloota:
-
-📝 Qormaata uumuu
-📖 Qormaata fudhachuu
-📊 Qabxii ilaalu
-👨‍🏫 Qormaata kee ilaalu
-📚 Barnoota
-👤 Profile
-
-👇 Mee filannoo keessaa tokko filadhu.`,
-    {
-      reply_markup:
-        mainKeyboard()
-    }
-  );
-}
-
-/* =====================================================
-   CREATE EXAM
-===================================================== */
-
-async function startCreateExam(chatId) {
-
-  sessions.set(
-    chatId,
-    {
-      step: "exam_title"
-    }
-  );
-
-  await sendMessage(
-    chatId,
-    `📝 MAQAA QORMAATAA
-
-Maqaa qormaataa galchi.
-
-Fakkeenya:
-Qormaata Herregaa Kutaa 8`,
-    {
-      reply_markup:
-        cancelKeyboard()
-    }
-  );
-}
-
-async function processCreateExam(
-  chatId,
-  msg,
-  text
-) {
-
-  const s =
-    sessions.get(chatId);
-
-  if (!s) return false;
-
-  /* TITLE */
-
-  if (s.step === "exam_title") {
-
-    if (text.length < 2) {
-
-      await sendMessage(
-        chatId,
-        "❌ Maqaan qormaataa gabaabaa dha."
-      );
-
-      return true;
-    }
-
-    s.title = text;
-    s.step = "exam_subject";
-
-    await sendMessage(
-      chatId,
-      `📚 BARNOOTA
-
-Maqaa barnootaa galchi.
-
-Fakkeenya:
-Herrega`,
-      {
-        reply_markup:
-          cancelKeyboard()
-      }
-    );
-
-    return true;
-  }
-
-  /* SUBJECT */
-
-  if (s.step === "exam_subject") {
-
-    s.subject = text;
-    s.step = "exam_duration";
-
-    await sendMessage(
-      chatId,
-      `⏱️ YEROO QORMAATAA
-
-Daqiiqaa meeqa akka turu galchi.
-
-1 hanga 1440 galchi.
-
-Fakkeenya:
-30`,
-      {
-        reply_markup:
-          cancelKeyboard()
-      }
-    );
-
-    return true;
-  }
-
-  /* DURATION */
-
-  if (s.step === "exam_duration") {
-
-    const cleanText =
-      String(text)
-        .trim()
-        .replace(/[^\d]/g, "");
-
-    const duration =
-      parseInt(
-        cleanText,
-        10
-      );
-
-    if (
-      !cleanText ||
-      Number.isNaN(duration) ||
-      duration < 1 ||
-      duration > 1440
-    ) {
-
-      await sendMessage(
-        chatId,
-        `❌ Yeroon sirrii miti.
-
-Lakkoofsa daqiiqaa
-1 hanga 1440 galchi.
-
-Fakkeenya:
-30`
-      );
-
-      return true;
-    }
-
-    const code =
-      generateExamCode();
-
-    try {
-
-      const result =
-        await pool.query(
-          `
-          INSERT INTO exams
-          (
-            code,
-            title,
-            subject,
-            duration,
-            teacher_id,
-            creator_id,
-            starts_at,
-            ends_at
-          )
-          VALUES
-          (
-            $1,
-            $2,
-            $3,
-            $4,
-            $5,
-            $5,
-            CURRENT_TIMESTAMP,
-            NULL
-          )
-          RETURNING id, code
-          `,
-          [
-            code,
-            s.title,
-            s.subject,
-            duration,
-            msg.from.id
-          ]
-        );
-
-      const exam =
-        result.rows[0];
-
-      s.examId =
-        exam.id;
-
-      s.examCode =
-        exam.code;
-
-      s.duration =
-        duration;
-
-      s.step =
-        "question_text";
-
-      await sendMessage(
-        chatId,
-        `✅ QORMAANNI UUMAMEERA!
-
-📌 Maqaa:
-${s.title}
-
-📚 Barnoota:
-${s.subject}
-
-⏱️ Yeroo:
-${duration} daqiiqaa
-
-🔑 Code:
-${exam.code}
-
-Amma gaaffii 1ffaa galchi.`,
-        {
-          reply_markup:
-            cancelKeyboard()
-        }
-      );
-
-      await sendMessage(
-        chatId,
-        `❓ GAAFFII 1FFAA
-
-Gaaffii barreessi.`
-      );
-
-    } catch (err) {
-
-      console.error(
-        "❌ Exam create error:",
-        err
-      );
-
-      await sendMessage(
-        chatId,
-        "❌ Qormaata uumuu irratti dogongorri uumame."
-      );
-    }
-
-    return true;
-  }
-
-  return false;
-}
-
-/* =====================================================
-   ADD QUESTIONS
-===================================================== */
-
-async function processQuestion(
-  chatId,
-  msg,
-  text
-) {
-
-  const s =
-    sessions.get(chatId);
-
-  if (!s) return false;
-
-  /* QUESTION */
-
-  if (
-    s.step ===
-    "question_text"
-  ) {
-
-    s.question =
-      text;
-
-    s.step =
-      "option_a";
-
-    await sendMessage(
-      chatId,
-      "🅰️ Filannoo A galchi."
-    );
-
-    return true;
-  }
-
-  /* A */
-
-  if (
-    s.step ===
-    "option_a"
-  ) {
-
-    s.options = {
-      A: text
-    };
-
-    s.step =
-      "option_b";
-
-    await sendMessage(
-      chatId,
-      "🅱️ Filannoo B galchi."
-    );
-
-    return true;
-  }
-
-  /* B */
-
-  if (
-    s.step ===
-    "option_b"
-  ) {
-
-    s.options.B =
-      text;
-
-    s.step =
-      "option_c";
-
-    await sendMessage(
-      chatId,
-      "©️ Filannoo C galchi."
-    );
-
-    return true;
-  }
-
-  /* C */
-
-  if (
-    s.step ===
-    "option_c"
-  ) {
-
-    s.options.C =
-      text;
-
-    s.step =
-      "option_d";
-
-    await sendMessage(
-      chatId,
-      "🆔 Filannoo D galchi."
-    );
-
-    return true;
-  }
-
-  /* D */
-
-  if (
-    s.step ===
-    "option_d"
-  ) {
-
-    s.options.D =
-      text;
-
-    s.step =
-      "correct_answer";
-
-    await sendMessage(
-      chatId,
-      `✅ DEEBII SIRRII
-
-A, B, C ykn D qofa barreessi.
-
-Fakkeenya:
-B`
-    );
-
-    return true;
-  }
-
-  /* CORRECT */
-
-  if (
-    s.step ===
-    "correct_answer"
-  ) {
-
-    const correct =
-      text
-        .trim()
-        .toUpperCase();
-
-    if (
-      ![
-        "A",
-        "B",
-        "C",
-        "D"
-      ].includes(correct)
-    ) {
-
-      await sendMessage(
-        chatId,
-        `❌ Deebiin sirrii miti.
-
-A, B, C ykn D qofa galchi.`
-      );
-
-      return true;
-    }
-
-    s.correctAnswer =
-      correct;
-
-    s.step =
-      "question_points";
-
-    await sendMessage(
-      chatId,
-      `🎯 QABXII
-
-Gaaffiin kun qabxii meeqa qaba?
-
-Fakkeenya:
-1`
-    );
-
-    return true;
-  }
-
-  /* POINTS */
-
-  if (
-    s.step ===
-    "question_points"
-  ) {
-
-    const points =
-      parseInt(
-        String(text)
-          .trim()
-          .replace(/[^\d]/g, ""),
-        10
-      );
-
-    if (
-      Number.isNaN(points) ||
-      points < 1 ||
-      points > 100
-    ) {
-
-      await sendMessage(
-        chatId,
-        `❌ Qabxiin sirrii miti.
-
-1 hanga 100 galchi.
-
-Fakkeenya:
-1`
-      );
-
-      return true;
-    }
-
-    try {
-
-      const correctText =
-        s.options[
-          s.correctAnswer
-        ];
-
-      const questionResult =
-        await pool.query(
-          `
-          INSERT INTO questions
-          (
-            exam_id,
-            question_text,
-            correct_answer,
-            points
-          )
-          VALUES
-          ($1, $2, $3, $4)
-          RETURNING id
-          `,
-          [
-            s.examId,
-            s.question,
-            correctText,
-            points
-          ]
-        );
-
-      const questionId =
-        questionResult
-          .rows[0]
-          .id;
-
-      for (
-        const key of [
-          "A",
-          "B",
-          "C",
-          "D"
-        ]
-      ) {
-
-        await pool.query(
-          `
-          INSERT INTO options
-          (
-            question_id,
-            option_key,
-            option_text
-          )
-          VALUES
-          ($1, $2, $3)
-          `,
-          [
-            questionId,
-            key,
-            s.options[key]
-          ]
-        );
-      }
-
-      s.step =
-        "next_question";
-
-      await sendMessage(
-        chatId,
-        `✅ Gaaffiin galmaa'e!
-
-❓ ${s.question}
-
-🅰️ ${s.options.A}
-🅱️ ${s.options.B}
-©️ ${s.options.C}
-🆔 ${s.options.D}
-
-✅ Deebii sirrii:
-${s.correctAnswer}
-
-🎯 Qabxii:
-${points}
-
-➡️ Gaaffii biraa dabaluuf:
-E barreessi
-
-➡️ Qormaata xumuruuf:
-X barreessi`,
-        {
-          reply_markup:
-            cancelKeyboard()
-        }
-      );
-
-    } catch (err) {
-
-      console.error(
-        "❌ Question insert error:",
-        err
-      );
-
-      await sendMessage(
-        chatId,
-        `❌ Gaaffii galchuu irratti dogongorri uumame.
-
-${err.message}`
-      );
-    }
-
-    return true;
-  }
-
-  /* NEXT */
-
-  if (
-    s.step ===
-    "next_question"
-  ) {
-
-    const command =
-      text
-        .trim()
-        .toUpperCase();
-
-    if (
-      command === "X"
-    ) {
-
-      sessions.delete(
-        chatId
-      );
-
-      await sendMessage(
-        chatId,
-        `🎉 QORMAANNI XUMURAME!
-
-🔑 Code:
-${s.examCode}
-
-📌 Maqaa:
-${s.title}
-
-📚 Barnoota:
-${s.subject}
-
-⏱️ Yeroo:
-${s.duration} daqiiqaa
-
-Barataan qormaata fudhachuuf:
-
-📖 Qormaata Fudhadhu
-
-filadhuutii code kana galchi:
-
-${s.examCode}`,
-        {
-          reply_markup:
-            mainKeyboard()
-        }
-      );
-
-      return true;
-    }
-
-    if (
-      command === "E"
-    ) {
-
-      s.step =
-        "question_text";
-
-      await sendMessage(
-        chatId,
-        `❓ GAAFFII HAARAA
-
-Gaaffii itti aanu barreessi.`
-      );
-
-      return true;
-    }
-
-    await sendMessage(
-      chatId,
-      `➡️ Gaaffii biraa dabaluuf E barreessi.
-
-➡️ Qormaata xumuruuf X barreessi.`
-    );
-
-    return true;
-  }
-
-  return false;
-}
-
-/* =====================================================
-   TAKE EXAM
-===================================================== */
-
-async function startTakeExam(
-  chatId
-) {
-
-  sessions.set(
-    chatId,
-    {
-      step: "exam_code"
-    }
-  );
-
-  await sendMessage(
-    chatId,
-    `📖 QORMAATA FUDHADHU
-
-Code qormaataa galchi.
-
-Fakkeenya:
-ABC123`,
-    {
-      reply_markup:
-        cancelKeyboard()
-    }
-  );
-}
-
-/* =====================================================
-   START EXAM
-===================================================== */
-
-async function startExamByCode(
-  chatId,
-  msg,
-  text
-) {
-
-  const code =
+async function answerCallback(callbackId, text = "") {
+  return telegram("answerCallbackQuery", {
+    callback_query_id: callbackId,
     text
-      .trim()
-      .toUpperCase();
-
-  try {
-
-    const examResult =
-      await pool.query(
-        `
-        SELECT *
-        FROM exams
-        WHERE UPPER(code) = $1
-        LIMIT 1
-        `,
-        [code]
-      );
-
-    if (
-      examResult.rows.length === 0
-    ) {
-
-      await sendMessage(
-        chatId,
-        `❌ Qormaata kana hin argamne.
-
-Code sirrii galchi.`
-      );
-
-      return true;
-    }
-
-    const exam =
-      examResult.rows[0];
-
-    const questionsResult =
-      await pool.query(
-        `
-        SELECT *
-        FROM questions
-        WHERE exam_id = $1
-        ORDER BY id ASC
-        `,
-        [exam.id]
-      );
-
-    if (
-      questionsResult.rows.length === 0
-    ) {
-
-      await sendMessage(
-        chatId,
-        "❌ Qormaanni kun gaaffii hin qabu."
-      );
-
-      sessions.delete(
-        chatId
-      );
-
-      return true;
-    }
-
-    const duration =
-      Number(
-        exam.duration || 30
-      );
-
-    const expiresAt =
-      new Date(
-        Date.now() +
-        duration *
-        60 *
-        1000
-      );
-
-    const attemptResult =
-      await pool.query(
-        `
-        INSERT INTO attempts
-        (
-          exam_id,
-          student_id,
-          student_name,
-          score,
-          total,
-          percentage,
-          started_at,
-          expires_at
-        )
-        VALUES
-        (
-          $1,
-          $2,
-          $3,
-          0,
-          $4,
-          0,
-          CURRENT_TIMESTAMP,
-          $5
-        )
-        RETURNING id
-        `,
-        [
-          exam.id,
-          msg.from.id,
-          msg.from.first_name ||
-            "Barataa",
-          questionsResult.rows.length,
-          expiresAt
-        ]
-      );
-
-    const attemptId =
-      attemptResult
-        .rows[0]
-        .id;
-
-    sessions.set(
-      chatId,
-      {
-        step: "taking_exam",
-        examId: exam.id,
-        examCode: exam.code,
-        examTitle: exam.title,
-        duration,
-        attemptId,
-        questions:
-          questionsResult.rows,
-        questionIndex: 0,
-        answers: {}
-      }
-    );
-
-    await sendMessage(
-      chatId,
-      `📝 QORMAATA JALQABSIISI!
-
-📌 ${exam.title}
-
-📚 ${exam.subject || ""}
-
-⏱️ Yeroo:
-${duration} daqiiqaa
-
-❓ Gaaffiiwwan:
-${questionsResult.rows.length}
-
-⏳ Yeroon amma irraa eegala.
-
-👇 Gaaffii 1ffaa deebisi.`
-    );
-
-    await sendExamQuestion(
-      chatId
-    );
-
-    return true;
-
-  } catch (err) {
-
-    console.error(
-      "❌ Start exam error:",
-      err
-    );
-
-    await sendMessage(
-      chatId,
-      "❌ Qormaata jalqabuu irratti dogongorri uumame."
-    );
-
-    return true;
-  }
+  });
 }
 
-/* =====================================================
-   SEND QUESTION
-===================================================== */
+function inlineKeyboard(rows) {
+  return {
+    inline_keyboard: rows.map(row =>
+      row.map(button => ({
+        text: button.text,
+        callback_data: button.data
+      }))
+    )
+  };
+}
 
-async function sendExamQuestion(
-  chatId
-) {
+function homeButton() {
+  return [{ text: "🏠 Menu Guddaa", data: "home" }];
+}
 
-  const s =
-    sessions.get(chatId);
+// ========================================
+// MENU FI LISTAA
+// ========================================
 
-  if (
-    !s ||
-    s.step !==
-    "taking_exam"
-  ) {
-    return;
+function prophetsKeyboard() {
+  const rows = [];
+
+  for (let i = 0; i < PROPHETS.length; i += 2) {
+    rows.push(
+      PROPHETS.slice(i, i + 2).map(p => ({
+        text: p.name,
+        data: `prophet:${p.id}`
+      }))
+    );
   }
 
-  /* TIMER */
+  rows.push(homeButton());
+  return inlineKeyboard(rows);
+}
 
-  const attemptResult =
-    await pool.query(
-      `
-      SELECT expires_at
-      FROM attempts
-      WHERE id = $1
-      `,
-      [s.attemptId]
+function companionsKeyboard() {
+  const rows = [];
+
+  for (let i = 0; i < COMPANIONS.length; i += 2) {
+    rows.push(
+      COMPANIONS.slice(i, i + 2).map(c => ({
+        text: c.name,
+        data: `companion:${c.id}`
+      }))
     );
-
-  if (
-    attemptResult.rows.length === 0
-  ) {
-
-    sessions.delete(
-      chatId
-    );
-
-    return;
   }
 
-  const expiresAt =
-    new Date(
-      attemptResult
-        .rows[0]
-        .expires_at
-    );
+  rows.push(homeButton());
+  return inlineKeyboard(rows);
+}
 
-  if (
-    Date.now() >=
-    expiresAt.getTime()
-  ) {
+function lessonsKeyboard() {
+  const rows = LESSONS.map(item => [
+    { text: item.name, data: `lesson:${item.id}` }
+  ]);
 
-    await finishExam(
-      chatId,
-      "⏰ Yeroon qormaataa xumurame."
-    );
+  rows.push(homeButton());
+  return inlineKeyboard(rows);
+}
 
-    return;
-  }
+async function showHome(chatId) {
+  const text =
+    "🌙 WAAMARA — وامارا\n\n" +
+    "Baga nagaan dhuftan!\n" +
+    "Seenaa Nabiyyootaa fi Sahaabota Afaan Oromoo fi Afaan Arabaa baradhaa.\n\n" +
+    "مرحبًا بكم في وامارا!\n" +
+    "تعلّموا قصص الأنبياء والصحابة باللغتين الأورومية والعربية.\n\n" +
+    "Maal barachuu barbaadda?";
 
-  /* FINISH */
+  return sendMessage(chatId, text, { reply_markup: MAIN_MENU });
+}
 
-  if (
-    s.questionIndex >=
-    s.questions.length
-  ) {
-
-    await finishExam(
-      chatId,
-      "🎉 Qormaata xumurte."
-    );
-
-    return;
-  }
-
-  const question =
-    s.questions[
-      s.questionIndex
-    ];
-
-  const optionsResult =
-    await pool.query(
-      `
-      SELECT
-        option_key,
-        option_text
-      FROM options
-      WHERE question_id = $1
-      ORDER BY id ASC
-      `,
-      [question.id]
-    );
-
-  const keyboard =
-    optionsResult.rows.map(
-      (o) => [
-        {
-          text:
-            `${o.option_key}. ${o.option_text}`,
-
-          callback_data:
-            `answer_${question.id}_${o.option_key}`
-        }
-      ]
-    );
-
-  await sendMessage(
+async function showProphets(chatId) {
+  return sendMessage(
     chatId,
-    `❓ GAAFFII ${s.questionIndex + 1}/${s.questions.length}
-
-${question.question_text}
-
-👇 Deebii sirrii filadhu.`,
-    {
-      reply_markup: {
-        inline_keyboard:
-          keyboard
-      }
-    }
+    "📚 SEENAA NABIYYOOTAA\n\nقصص الأنبياء\n\nNabiyyii barachuu barbaaddu filadhu.\nاختر اسم النبي:",
+    { reply_markup: prophetsKeyboard() }
   );
 }
 
-/* =====================================================
-   PROCESS BUTTON ANSWER
-===================================================== */
-
-async function processAnswer(
-  callbackQuery,
-  questionId,
-  answerKey
-) {
-
-  const chatId =
-    callbackQuery
-      .message
-      .chat
-      .id;
-
-  const s =
-    sessions.get(chatId);
-
-  await answerCallback(
-    callbackQuery.id
-  );
-
-  /* REMOVE OLD BUTTONS */
-
-  try {
-
-    await telegram(
-      "editMessageReplyMarkup",
-      {
-        chat_id: chatId,
-        message_id:
-          callbackQuery
-            .message
-            .message_id,
-
-        reply_markup: {
-          inline_keyboard: []
-        }
-      }
-    );
-
-  } catch (err) {
-
-    console.error(
-      "❌ Button remove error:",
-      err.message
-    );
-  }
-
-  if (
-    !s ||
-    s.step !==
-    "taking_exam"
-  ) {
-
-    await sendMessage(
-      chatId,
-      "❌ Qormaanni kun hin jirre."
-    );
-
-    return;
-  }
-
-  /* IMPORTANT:
-     Button gaaffii duraanii irraa
-     dhufe moo gaaffii ammaa?
-  */
-
-  const currentQuestion =
-    s.questions[
-      s.questionIndex
-    ];
-
-  if (
-    !currentQuestion ||
-    Number(currentQuestion.id) !==
-      Number(questionId)
-  ) {
-
-    await sendMessage(
-      chatId,
-      "⚠️ Gaaffiin kun duraan deebifameera."
-    );
-
-    return;
-  }
-
-  try {
-
-    /* TIMER */
-
-    const attemptResult =
-      await pool.query(
-        `
-        SELECT expires_at
-        FROM attempts
-        WHERE id = $1
-        `,
-        [s.attemptId]
-      );
-
-    if (
-      attemptResult.rows.length === 0
-    ) {
-      return;
-    }
-
-    const expiresAt =
-      new Date(
-        attemptResult
-          .rows[0]
-          .expires_at
-      );
-
-    if (
-      Date.now() >=
-      expiresAt.getTime()
-    ) {
-
-      await finishExam(
-        chatId,
-        "⏰ Yeroon qormaataa xumurame."
-      );
-
-      return;
-    }
-
-    /* QUESTION */
-
-    const questionResult =
-      await pool.query(
-        `
-        SELECT *
-        FROM questions
-        WHERE id = $1
-        `,
-        [questionId]
-      );
-
-    if (
-      questionResult.rows.length === 0
-    ) {
-      return;
-    }
-
-    const question =
-      questionResult.rows[0];
-
-    /* OPTION */
-
-    const optionResult =
-      await pool.query(
-        `
-        SELECT *
-        FROM options
-        WHERE question_id = $1
-        AND option_key = $2
-        LIMIT 1
-        `,
-        [
-          questionId,
-          answerKey
-        ]
-      );
-
-    if (
-      optionResult.rows.length === 0
-    ) {
-
-      await sendMessage(
-        chatId,
-        "❌ Filannoo kana hin argamne."
-      );
-
-      return;
-    }
-
-    const selectedText =
-      optionResult
-        .rows[0]
-        .option_text;
-
-    const isCorrect =
-      selectedText ===
-      question.correct_answer;
-
-    /* SAVE ANSWER */
-
-    await pool.query(
-      `
-      INSERT INTO answers
-      (
-        attempt_id,
-        question_id,
-        answer,
-        is_correct
-      )
-      VALUES
-      ($1, $2, $3, $4)
-      `,
-      [
-        s.attemptId,
-        questionId,
-        selectedText,
-        isCorrect
-      ]
-    );
-
-    s.answers[
-      questionId
-    ] =
-      isCorrect
-        ? Number(
-            question.points || 0
-          )
-        : 0;
-
-    /* RESULT */
-
-    if (isCorrect) {
-
-      await sendMessage(
-        chatId,
-        `✅ DEEBII SIRRII!
-
-🎯 +${question.points} qabxii`
-      );
-
-    } else {
-
-      await sendMessage(
-        chatId,
-        `❌ DEEBII SIRRII MITI.
-
-🎯 Qabxii: 0`
-      );
-    }
-
-    /* NEXT */
-
-    s.questionIndex++;
-
-    await sendExamQuestion(
-      chatId
-    );
-
-  } catch (err) {
-
-    console.error(
-      "❌ Answer error:",
-      err
-    );
-
-    await sendMessage(
-      chatId,
-      "❌ Deebii galchuu irratti dogongorri uumame."
-    );
-  }
-}
-
-/* =====================================================
-   PROCESS TEXT ANSWER
-===================================================== */
-
-async function processTextAnswer(
-  chatId,
-  msg,
-  questionId,
-  answerKey
-) {
-
-  const s =
-    sessions.get(chatId);
-
-  if (
-    !s ||
-    s.step !==
-    "taking_exam"
-  ) {
-    return;
-  }
-
-  try {
-
-    const currentQuestion =
-      s.questions[
-        s.questionIndex
-      ];
-
-    if (
-      !currentQuestion ||
-      Number(currentQuestion.id) !==
-        Number(questionId)
-    ) {
-
-      await sendMessage(
-        chatId,
-        "⚠️ Gaaffiin kun duraan deebifameera."
-      );
-
-      return;
-    }
-
-    const attemptResult =
-      await pool.query(
-        `
-        SELECT expires_at
-        FROM attempts
-        WHERE id = $1
-        `,
-        [s.attemptId]
-      );
-
-    if (
-      attemptResult.rows.length === 0
-    ) {
-      return;
-    }
-
-    const expiresAt =
-      new Date(
-        attemptResult
-          .rows[0]
-          .expires_at
-      );
-
-    if (
-      Date.now() >=
-      expiresAt.getTime()
-    ) {
-
-      await finishExam(
-        chatId,
-        "⏰ Yeroon qormaataa xumurame."
-      );
-
-      return;
-    }
-
-    const questionResult =
-      await pool.query(
-        `
-        SELECT *
-        FROM questions
-        WHERE id = $1
-        `,
-        [questionId]
-      );
-
-    if (
-      questionResult.rows.length === 0
-    ) {
-      return;
-    }
-
-    const question =
-      questionResult.rows[0];
-
-    const optionResult =
-      await pool.query(
-        `
-        SELECT *
-        FROM options
-        WHERE question_id = $1
-        AND option_key = $2
-        LIMIT 1
-        `,
-        [
-          questionId,
-          answerKey
-        ]
-      );
-
-    if (
-      optionResult.rows.length === 0
-    ) {
-
-      await sendMessage(
-        chatId,
-        "❌ Filannoo kana hin argamne."
-      );
-
-      return;
-    }
-
-    const selectedText =
-      optionResult
-        .rows[0]
-        .option_text;
-
-    const isCorrect =
-      selectedText ===
-      question.correct_answer;
-
-    await pool.query(
-      `
-      INSERT INTO answers
-      (
-        attempt_id,
-        question_id,
-        answer,
-        is_correct
-      )
-      VALUES
-      ($1, $2, $3, $4)
-      `,
-      [
-        s.attemptId,
-        questionId,
-        selectedText,
-        isCorrect
-      ]
-    );
-
-    s.answers[
-      questionId
-    ] =
-      isCorrect
-        ? Number(
-            question.points || 0
-          )
-        : 0;
-
-    if (isCorrect) {
-
-      await sendMessage(
-        chatId,
-        `✅ DEEBII SIRRII!
-
-🎯 +${question.points} qabxii`
-      );
-
-    } else {
-
-      await sendMessage(
-        chatId,
-        `❌ DEEBII SIRRII MITI.
-
-🎯 Qabxii: 0`
-      );
-    }
-
-    s.questionIndex++;
-
-    await sendExamQuestion(
-      chatId
-    );
-
-  } catch (err) {
-
-    console.error(
-      "❌ Text answer error:",
-      err
-    );
-
-    await sendMessage(
-      chatId,
-      "❌ Deebii galchuu irratti dogongorri uumame."
-    );
-  }
-}
-
-/* =====================================================
-   FINISH EXAM
-===================================================== */
-
-async function finishExam(
-  chatId,
-  message
-) {
-
-  const s =
-    sessions.get(chatId);
-
-  if (!s) return;
-
-  try {
-
-    const answersResult =
-      await pool.query(
-        `
-        SELECT
-          a.is_correct,
-          q.points
-        FROM answers a
-        JOIN questions q
-          ON q.id = a.question_id
-        WHERE a.attempt_id = $1
-        `,
-        [s.attemptId]
-      );
-
-    let score = 0;
-
-    for (
-      const row of
-      answersResult.rows
-    ) {
-
-      if (
-        row.is_correct
-      ) {
-
-        score +=
-          Number(
-            row.points || 0
-          );
-      }
-    }
-
-    const totalResult =
-      await pool.query(
-        `
-        SELECT
-          COALESCE(
-            SUM(points),
-            0
-          ) AS total
-        FROM questions
-        WHERE exam_id = $1
-        `,
-        [s.examId]
-      );
-
-    const total =
-      Number(
-        totalResult
-          .rows[0]
-          .total || 0
-      );
-
-    const percentage =
-      total > 0
-        ? (
-            score /
-            total
-          ) * 100
-        : 0;
-
-    await pool.query(
-      `
-      UPDATE attempts
-      SET
-        score = $1,
-        total = $2,
-        percentage = $3,
-        finished_at =
-          CURRENT_TIMESTAMP
-      WHERE id = $4
-      `,
-      [
-        score,
-        total,
-        percentage.toFixed(2),
-        s.attemptId
-      ]
-    );
-
-    sessions.delete(
-      chatId
-    );
-
-    await sendMessage(
-      chatId,
-      `${message}
-
-🎉 QORMAANNI XUMURAMEERA!
-
-📌 Qormaata:
-${s.examTitle}
-
-🏆 Qabxii:
-${score}/${total}
-
-📊 Dhibbeentaa:
-${percentage.toFixed(2)}%
-
-📊 Qabxiin kee galmaa'eera.`,
-      {
-        reply_markup:
-          mainKeyboard()
-      }
-    );
-
-  } catch (err) {
-
-    console.error(
-      "❌ Finish exam error:",
-      err
-    );
-
-    sessions.delete(
-      chatId
-    );
-
-    await sendMessage(
-      chatId,
-      "❌ Qormaata xumuru irratti dogongorri uumame.",
-      {
-        reply_markup:
-          mainKeyboard()
-      }
-    );
-  }
-}
-
-/* =====================================================
-   MY SCORE
-===================================================== */
-
-async function showMyScores(
-  chatId,
-  userId
-) {
-
-  try {
-
-    const result =
-      await pool.query(
-        `
-        SELECT
-          a.score,
-          a.total,
-          a.percentage,
-          a.finished_at,
-          e.title,
-          e.subject
-        FROM attempts a
-        JOIN exams e
-          ON e.id = a.exam_id
-        WHERE a.student_id = $1
-        ORDER BY a.id DESC
-        LIMIT 10
-        `,
-        [userId]
-      );
-
-    if (
-      result.rows.length === 0
-    ) {
-
-      await sendMessage(
-        chatId,
-        "📊 Qabxiin ati argatte ammaaf hin jiru.",
-        {
-          reply_markup:
-            mainKeyboard()
-        }
-      );
-
-      return;
-    }
-
-    let text =
-      "📊 QABXII KOO\n\n";
-
-    result.rows.forEach(
-      (row, index) => {
-
-        text +=
-          `${index + 1}. ${row.title}\n` +
-          `📚 ${row.subject || ""}\n` +
-          `🏆 ${row.score}/${row.total}\n` +
-          `📈 ${Number(row.percentage).toFixed(2)}%\n\n`;
-      }
-    );
-
-    await sendMessage(
-      chatId,
-      text,
-      {
-        reply_markup:
-          mainKeyboard()
-      }
-    );
-
-  } catch (err) {
-
-    console.error(
-      "❌ Score error:",
-      err
-    );
-
-    await sendMessage(
-      chatId,
-      "❌ Qabxii ilaalu irratti dogongorri uumame."
-    );
-  }
-}
-
-/* =====================================================
-   TEACHER EXAMS
-===================================================== */
-
-async function showTeacherExams(
-  chatId,
-  userId
-) {
-
-  try {
-
-    const result =
-      await pool.query(
-        `
-        SELECT
-          id,
-          code,
-          title,
-          subject,
-          duration,
-          created_at
-        FROM exams
-        WHERE teacher_id = $1
-           OR creator_id = $1
-        ORDER BY id DESC
-        LIMIT 20
-        `,
-        [userId]
-      );
-
-    if (
-      result.rows.length === 0
-    ) {
-
-      await sendMessage(
-        chatId,
-        "👨‍🏫 Qormaata ati uumte hin jiru.",
-        {
-          reply_markup:
-            mainKeyboard()
-        }
-      );
-
-      return;
-    }
-
-    let text =
-      "👨‍🏫 QORMAATA KOO\n\n";
-
-    result.rows.forEach(
-      (exam, index) => {
-
-        text +=
-          `${index + 1}. ${exam.title}\n` +
-          `📚 ${exam.subject || ""}\n` +
-          `🔑 Code: ${exam.code}\n` +
-          `⏱️ ${exam.duration} daqiiqaa\n\n`;
-      }
-    );
-
-    await sendMessage(
-      chatId,
-      text,
-      {
-        reply_markup:
-          mainKeyboard()
-      }
-    );
-
-  } catch (err) {
-
-    console.error(
-      "❌ Teacher exams error:",
-      err
-    );
-
-    await sendMessage(
-      chatId,
-      "❌ Qormaata kee ilaalu irratti dogongorri uumame."
-    );
-  }
-}
-
-/* =====================================================
-   PROFILE
-===================================================== */
-
-async function showProfile(
-  chatId,
-  user
-) {
-
-  try {
-
-    const result =
-      await pool.query(
-        `
-        SELECT *
-        FROM users
-        WHERE telegram_id = $1
-        LIMIT 1
-        `,
-        [user.id]
-      );
-
-    const dbUser =
-      result.rows[0];
-
-    await sendMessage(
-      chatId,
-      `👤 PROFILE
-
-👨 Maqaa:
-${user.first_name || ""}
-
-🔹 Username:
-${
-  user.username
-    ? "@" + user.username
-    : "Hin qabu"
-}
-
-🆔 Telegram ID:
-${user.id}
-
-📅 Galmee:
-${
-  dbUser?.created_at
-    ? new Date(
-        dbUser.created_at
-      ).toLocaleString()
-    : "-"
-}`,
-      {
-        reply_markup:
-          mainKeyboard()
-      }
-    );
-
-  } catch (err) {
-
-    console.error(
-      "❌ Profile error:",
-      err
-    );
-
-    await sendMessage(
-      chatId,
-      "❌ Profile ilaalu irratti dogongorri uumame."
-    );
-  }
-}
-
-/* =====================================================
-   LEARNING
-===================================================== */
-
-async function showLearning(
-  chatId
-) {
-
-  await sendMessage(
+async function showCompanions(chatId) {
+  return sendMessage(
     chatId,
-    `📚 BARNOOTA
-
-Waamara keessatti:
-
-📖 Barnoota
-📝 Qormaata
-📊 Qabxii
-🎯 Shaakala
-❓ Gaaffii fi Deebii
-
-Tajaajiloonni barnootaa
-gara fuulduraatti ni bal'atu.`,
-    {
-      reply_markup:
-        mainKeyboard()
-    }
+    "🤍 SEENAA SAHAABOTAA\n\nقصص الصحابة\n\nSahaabaa barachuu barbaaddu filadhu.\nاختر اسم الصحابي أو الصحابية:",
+    { reply_markup: companionsKeyboard() }
   );
 }
 
-/* =====================================================
-   OTHER SERVICES
-===================================================== */
-
-async function showOtherServices(
-  chatId
-) {
-
-  await sendMessage(
+async function showLessons(chatId) {
+  return sendMessage(
     chatId,
-    `💼 HOJIIWWAN BIROO
-
-Tajaajiloota Waamara:
-
-📚 Barnoota
-📝 Qormaata
-📊 Qabxii
-👤 Profile
-🎯 Shaakala
-📖 Kitaaba`,
-    {
-      reply_markup:
-        mainKeyboard()
-    }
+    "🕌 BARNOOTA ISLAAMAA\n\nالدروس الإسلامية\n\nBarnoota barbaaddu filadhu.",
+    { reply_markup: lessonsKeyboard() }
   );
 }
 
-/* =====================================================
-   NORMAL MESSAGE
-===================================================== */
+// ========================================
+// SEENAA TOKKO AGARSIISUU
+// ========================================
 
-async function handleMessage(
-  msg
-) {
+async function showProphet(chatId, id) {
+  const item = PROPHETS.find(p => p.id === id);
 
-  if (
-    !msg ||
-    !msg.chat
-  ) {
-    return;
+  if (!item) {
+    return sendMessage(chatId, "Seenaa kana argachuu hin dandeenye.");
   }
-
-  const chatId =
-    msg.chat.id;
 
   const text =
-    typeof msg.text ===
-    "string"
-      ? msg.text.trim()
-      : "";
+    "📚 " + item.name + "\n\n" +
+    "🇪🇹 AFAAN OROMOO\n" + item.om + "\n\n" +
+    "📖 Barumsa irraa argamu:\n" + item.lesson + "\n\n" +
+    "🇸🇦 العربية\n" + item.ar + "\n\n" +
+    "📚 المرجع القرآني:\n" + item.ref + "\n\n" +
+    "⚠️ Yaadachiisa: Seenaa kana keessatti wanti Qur'aana keessatti ifatti hin dhufne akka dhugaa mirkanaa'eetti hin dhiyaatu.";
 
-  if (!msg.from) {
-    return;
-  }
-
-  try {
-
-    await saveUser(
-      msg.from
-    );
-
-  } catch (err) {
-
-    console.error(
-      "❌ Save user error:",
-      err
-    );
-  }
-
-  /* START */
-
-  if (
-    text === "/start"
-  ) {
-
-    await handleStart(
-      msg
-    );
-
-    return;
-  }
-
-  /* MENU */
-
-  if (
-    text === "/menu"
-  ) {
-
-    sessions.delete(
-      chatId
-    );
-
-    await sendMessage(
-      chatId,
-      "📋 MENU",
-      {
-        reply_markup:
-          mainKeyboard()
-      }
-    );
-
-    return;
-  }
-
-  /* CANCEL */
-
-  if (
-    text === "❌ Haqi"
-  ) {
-
-    sessions.delete(
-      chatId
-    );
-
-    await sendMessage(
-      chatId,
-      "❌ Hojii amma gochaa turte haqameera.",
-      {
-        reply_markup:
-          mainKeyboard()
-      }
-    );
-
-    return;
-  }
-
-  /* CREATE */
-
-  if (
-    text ===
-    "📝 Qormaata Uumi"
-  ) {
-
-    await startCreateExam(
-      chatId
-    );
-
-    return;
-  }
-
-  /* TAKE */
-
-  if (
-    text ===
-    "📖 Qormaata Fudhadhu"
-  ) {
-
-    await startTakeExam(
-      chatId
-    );
-
-    return;
-  }
-
-  /* SCORE */
-
-  if (
-    text ===
-    "📊 Qabxii Koo"
-  ) {
-
-    await showMyScores(
-      chatId,
-      msg.from.id
-    );
-
-    return;
-  }
-
-  /* TEACHER */
-
-  if (
-    text ===
-    "👨‍🏫 Qormaata Koo"
-  ) {
-
-    await showTeacherExams(
-      chatId,
-      msg.from.id
-    );
-
-    return;
-  }
-
-  /* LEARNING */
-
-  if (
-    text ===
-    "📚 Barnoota"
-  ) {
-
-    await showLearning(
-      chatId
-    );
-
-    return;
-  }
-
-  /* PROFILE */
-
-  if (
-    text ===
-    "👤 Profile"
-  ) {
-
-    await showProfile(
-      chatId,
-      msg.from
-    );
-
-    return;
-  }
-
-  /* OTHER */
-
-  if (
-    text ===
-    "💼 Hojiiwwan Biroo"
-  ) {
-
-    await showOtherServices(
-      chatId
-    );
-
-    return;
-  }
-
-  /* ACTIVE SESSION */
-
-  const session =
-    sessions.get(chatId);
-
-  if (session) {
-
-    /* EXAM CODE */
-
-    if (
-      session.step ===
-      "exam_code"
-    ) {
-
-      await startExamByCode(
-        chatId,
-        msg,
-        text
-      );
-
-      return;
-    }
-
-    /* CREATE */
-
-    if (
+  return sendMessage(chatId, text, {
+    reply_markup: inlineKeyboard([
       [
-        "exam_title",
-        "exam_subject",
-        "exam_duration"
-      ].includes(
-        session.step
-      )
-    ) {
+        { text: "⬅️ Nabiyyoota", data: "prophets" },
+        { text: "🏠 Menu", data: "home" }
+      ]
+    ])
+  });
+}
 
-      const handled =
-        await processCreateExam(
-          chatId,
-          msg,
-          text
-        );
+async function showCompanion(chatId, id) {
+  const item = COMPANIONS.find(c => c.id === id);
 
-      if (handled) {
-        return;
-      }
-    }
-
-    /* QUESTIONS */
-
-    if (
-      [
-        "question_text",
-        "option_a",
-        "option_b",
-        "option_c",
-        "option_d",
-        "correct_answer",
-        "question_points",
-        "next_question"
-      ].includes(
-        session.step
-      )
-    ) {
-
-      const handled =
-        await processQuestion(
-          chatId,
-          msg,
-          text
-        );
-
-      if (handled) {
-        return;
-      }
-    }
-
-    /* TAKING EXAM */
-
-    if (
-      session.step ===
-      "taking_exam"
-    ) {
-
-      const answerKey =
-        text
-          .trim()
-          .toUpperCase();
-
-      if (
-        [
-          "A",
-          "B",
-          "C",
-          "D"
-        ].includes(
-          answerKey
-        )
-      ) {
-
-        const currentQuestion =
-          session.questions[
-            session.questionIndex
-          ];
-
-        if (
-          currentQuestion
-        ) {
-
-          await processTextAnswer(
-            chatId,
-            msg,
-            currentQuestion.id,
-            answerKey
-          );
-
-          return;
-        }
-      }
-
-      await sendMessage(
-        chatId,
-        `👇 Deebii tokko keessaa filadhu.
-
-Yookaan A, B, C, D keessaa tokko barreessi.`
-      );
-
-      return;
-    }
+  if (!item) {
+    return sendMessage(chatId, "Seenaa Sahaabaa kana argachuu hin dandeenye.");
   }
 
-  /* DEFAULT */
+  const text =
+    "🤍 " + item.name + "\n\n" +
+    "🇪🇹 AFAAN OROMOO\n" + item.om + "\n\n" +
+    "📖 Barumsa irraa argamu:\n" + item.lesson + "\n\n" +
+    "🇸🇦 العربية\n" + item.ar + "\n\n" +
+    "📚 Odeeffannoon seenaa Sahaabaa Qur'aana, Hadiisa sahiiha fi kitaabota seenaa amanamoo irraa mirkaneeffamuu qaba.";
 
-  await sendMessage(
+  return sendMessage(chatId, text, {
+    reply_markup: inlineKeyboard([
+      [
+        { text: "⬅️ Sahaabota", data: "companions" },
+        { text: "🏠 Menu", data: "home" }
+      ]
+    ])
+  });
+}
+
+async function showLesson(chatId, id) {
+  const item = LESSONS.find(x => x.id === id);
+
+  if (!item) {
+    return sendMessage(chatId, "Barnoota kana argachuu hin dandeenye.");
+  }
+
+  return sendMessage(
     chatId,
-    "📋 Mee menu keessaa tajaajila barbaadde filadhu.",
+    "🕌 " + item.name + "\n\n" +
+    "🇪🇹 AFAAN OROMOO\n" + item.om + "\n\n" +
+    "🇸🇦 العربية\n" + item.ar,
     {
-      reply_markup:
-        mainKeyboard()
-    }
-  );
-}
-
-/* =====================================================
-   CALLBACK QUERY
-===================================================== */
-
-async function handleCallbackQuery(
-  callbackQuery
-) {
-
-  const data =
-    callbackQuery.data ||
-    "";
-
-  if (
-    data.startsWith(
-      "answer_"
-    )
-  ) {
-
-    const parts =
-      data.split("_");
-
-    /*
-      answer_questionId_A
-    */
-
-    const questionId =
-      parseInt(
-        parts[1],
-        10
-      );
-
-    const answerKey =
-      parts[2];
-
-    if (
-      Number.isNaN(
-        questionId
-      ) ||
-      ![
-        "A",
-        "B",
-        "C",
-        "D"
-      ].includes(
-        answerKey
-      )
-    ) {
-
-      await answerCallback(
-        callbackQuery.id,
-        "❌ Deebiin sirrii miti."
-      );
-
-      return;
-    }
-
-    await processAnswer(
-      callbackQuery,
-      questionId,
-      answerKey
-    );
-
-    return;
-  }
-
-  await answerCallback(
-    callbackQuery.id
-  );
-}
-
-/* =====================================================
-   WEBHOOK
-===================================================== */
-
-app.post(
-  "/telegram/webhook",
-  async (req, res) => {
-
-    /*
-      Telegram akka saffisaan
-      200 argatuuf jalqaba deebisa.
-    */
-
-    res.sendStatus(200);
-
-    try {
-
-      const update =
-        req.body;
-
-      if (
-        update.callback_query
-      ) {
-
-        await handleCallbackQuery(
-          update.callback_query
-        );
-
-        return;
-      }
-
-      if (
-        update.message
-      ) {
-
-        await handleMessage(
-          update.message
-        );
-
-        return;
-      }
-
-    } catch (err) {
-
-      console.error(
-        "❌ Update error:",
-        err
-      );
-    }
-  }
-);
-
-/* =====================================================
-   HOME
-===================================================== */
-
-app.get(
-  "/",
-  (req, res) => {
-
-    res.send(
-      "🤖 Waamara Telegram Bot is online."
-    );
-  }
-);
-
-/* =====================================================
-   HEALTH
-===================================================== */
-
-app.get(
-  "/health",
-  async (req, res) => {
-
-    try {
-
-      await pool.query(
-        "SELECT 1"
-      );
-
-      res.json(
-        {
-          ok: true,
-          app: "Waamara",
-          database:
-            "connected"
-        }
-      );
-
-    } catch (err) {
-
-      res.status(500)
-        .json(
-          {
-            ok: false,
-            app: "Waamara",
-            database:
-              "error",
-            error:
-              err.message
-          }
-        );
-    }
-  }
-);
-
-/* =====================================================
-   WEBHOOK SETUP
-===================================================== */
-
-async function setupWebhook() {
-
-  const renderUrl =
-    process.env.RENDER_EXTERNAL_URL;
-
-  if (!renderUrl) {
-
-    console.error(
-      "❌ RENDER_EXTERNAL_URL hin argamne."
-    );
-
-    return;
-  }
-
-  const webhookUrl =
-    `${renderUrl}/telegram/webhook`;
-
-  try {
-
-    await telegram(
-      "setWebhook",
-      {
-        url:
-          webhookUrl
-      }
-    );
-
-    console.log(
-      "✅ Telegram webhook set:",
-      webhookUrl
-    );
-
-  } catch (err) {
-
-    console.error(
-      "❌ Webhook error:",
-      err.message
-    );
-  }
-}
-
-/* =====================================================
-   BOT COMMANDS
-===================================================== */
-
-async function setupCommands() {
-
-  try {
-
-    await telegram(
-      "setMyCommands",
-      {
-        commands: [
-          {
-            command: "start",
-            description:
-              "Waamara jalqabi"
-          },
-          {
-            command: "menu",
-            description:
-              "Menu bani"
-          }
+      reply_markup: inlineKeyboard([
+        [
+          { text: "⬅️ Barnoota", data: "lessons" },
+          { text: "🏠 Menu", data: "home" }
         ]
+      ])
+    }
+  );
+}
+
+// ========================================
+// QUIZ
+// ========================================
+
+async function startQuiz(chatId, index = 0) {
+  if (index >= QUIZ.length) {
+    return sendMessage(
+      chatId,
+      "🎉 Gaaffii fi deebii xumurtee jirta!\n\nأحسنت! انتهيت من الأسئلة.",
+      {
+        reply_markup: inlineKeyboard([
+          [{ text: "🔁 Irra deebi'i", data: "quiz:0" }],
+          homeButton()
+        ])
       }
     );
+  }
 
-    console.log(
-      "✅ Bot commands configured."
+  const q = QUIZ[index];
+
+  const rows = q.a.map((answer, i) => [
+    {
+      text: answer,
+      data: `answer:${index}:${i}`
+    }
+  ]);
+
+  rows.push(homeButton());
+
+  return sendMessage(
+    chatId,
+    `❓ Gaaffii ${index + 1}/${QUIZ.length}\n\n${q.q}\n\n🇸🇦 ${q.ar}`,
+    { reply_markup: inlineKeyboard(rows) }
+  );
+}
+
+// ========================================
+// MESSAGE HANDLER
+// ========================================
+
+async function handleMessage(message) {
+  if (!message || !message.chat) return;
+
+  const chatId = message.chat.id;
+  const text = (message.text || "").trim();
+
+  if (text.startsWith("/start") || text === "🏠 Menu Guddaa") {
+    return showHome(chatId);
+  }
+
+  if (text === "/help") {
+    return sendMessage(
+      chatId,
+      "Waamara bot seenaa Nabiyyootaa fi Sahaabota barachuuf si gargaara.\n\n" +
+      "/start - Menu guddaa\n" +
+      "/prophets - Seenaa Nabiyyootaa\n" +
+      "/companions - Seenaa Sahaabota\n" +
+      "/quiz - Gaaffii fi deebii"
+    );
+  }
+
+  if (text === "/prophets" || text === "📚 Seenaa Nabiyyootaa") {
+    return showProphets(chatId);
+  }
+
+  if (text === "/companions" || text === "🤍 Seenaa Sahaabota") {
+    return showCompanions(chatId);
+  }
+
+  if (text === "🌙 Seenaa Nabiyyii ﷺ") {
+    return showProphet(chatId, "muhammad");
+  }
+
+  if (text === "👩 Dubartoota Sahaabota") {
+    return sendMessage(
+      chatId,
+      "👩 DUBARTOOTA SAHAABOTA\n\n" +
+      "اختاري الصحابية:\n\n" +
+      "1. Khadiijaa رضي الله عنها\n" +
+      "2. Aa'ishaa رضي الله عنها\n" +
+      "3. Faaximaa رضي الله عنها",
+      {
+        reply_markup: inlineKeyboard([
+          [{ text: "Khadiijaa", data: "companion:khadija" }],
+          [{ text: "Aa'ishaa", data: "companion:aisha" }],
+          [{ text: "Faaximaa", data: "companion:fatima" }],
+          homeButton()
+        ])
+      }
+    );
+  }
+
+  if (text === "🕌 Barnoota Islaamaa") {
+    return showLessons(chatId);
+  }
+
+  if (text === "❓ Gaaffii fi Deebii" || text === "/quiz") {
+    return startQuiz(chatId);
+  }
+
+  if (text === "ℹ️ Waa'ee Botichaa") {
+    return sendMessage(
+      chatId,
+      "🤖 WAAMARA\n\n" +
+      "Bot barnootaa seenaa Nabiyyootaa, Sahaabota fi barnoota Islaamaa Afaan Oromoo fi Afaan Arabaa barsiisuuf qophaa'e.\n\n" +
+      "بوت تعليمي لقصص الأنبياء والصحابة والدروس الإسلامية باللغتين الأورومية والعربية.",
+      { reply_markup: MAIN_MENU }
+    );
+  }
+
+  return sendMessage(
+    chatId,
+    "Filannoo kana hin hubanne. Mee button menu keessaa tokko filadhu.\n\nلم أفهم اختيارك، اختر من القائمة.",
+    { reply_markup: MAIN_MENU }
+  );
+}
+
+// ========================================
+// CALLBACK HANDLER
+// ========================================
+
+async function handleCallback(query) {
+  const data = query.data || "";
+  const chatId = query.message && query.message.chat.id;
+
+  await answerCallback(query.id);
+
+  if (!chatId) return;
+
+  if (data === "home") {
+    return showHome(chatId);
+  }
+
+  if (data === "prophets") {
+    return showProphets(chatId);
+  }
+
+  if (data === "companions") {
+    return showCompanions(chatId);
+  }
+
+  if (data === "lessons") {
+    return showLessons(chatId);
+  }
+
+  if (data.startsWith("prophet:")) {
+    return showProphet(chatId, data.slice("prophet:".length));
+  }
+
+  if (data.startsWith("companion:")) {
+    return showCompanion(chatId, data.slice("companion:".length));
+  }
+
+  if (data.startsWith("lesson:")) {
+    return showLesson(chatId, data.slice("lesson:".length));
+  }
+
+  if (data.startsWith("quiz:")) {
+    const index = Number(data.split(":")[1]) || 0;
+    return startQuiz(chatId, index);
+  }
+
+  if (data.startsWith("answer:")) {
+    const parts = data.split(":");
+    const questionIndex = Number(parts[1]);
+    const answerIndex = Number(parts[2]);
+    const question = QUIZ[questionIndex];
+
+    if (!question) {
+      return sendMessage(chatId, "Gaaffiin kun hin jiru.");
+    }
+
+    const correct = answerIndex === question.correct;
+
+    const resultText = correct
+      ? "✅ Sirrii dha! بارك الله فيك"
+      : "❌ Deebiin sirrii: " + question.a[question.correct];
+
+    await sendMessage(
+      chatId,
+      resultText + "\n\n" + question.ar
     );
 
-  } catch (err) {
-
-    console.error(
-      "❌ Commands error:",
-      err.message
-    );
+    return startQuiz(chatId, questionIndex + 1);
   }
 }
 
-/* =====================================================
-   START SERVER
-===================================================== */
+// ========================================
+// WEBHOOK
+// ========================================
 
-async function startServer() {
+app.post("/telegram/webhook", async (req, res) => {
+  if (WEBHOOK_SECRET) {
+    const receivedSecret = req.get("X-Telegram-Bot-Api-Secret-Token");
+
+    if (receivedSecret !== WEBHOOK_SECRET) {
+      return res.status(403).send("Forbidden");
+    }
+  }
+
+  // Telegram deebii saffisaan argata.
+  res.sendStatus(200);
 
   try {
+    const update = req.body;
 
-    await migrateDatabase();
-
-    app.listen(
-      PORT,
-      "0.0.0.0",
-      async () => {
-
-        console.log(
-          `🚀 Waamara server running on port ${PORT}`
-        );
-
-        await setupCommands();
-
-        await setupWebhook();
-      }
-    );
-
-  } catch (err) {
-
-    console.error(
-      "❌ Server startup error:",
-      err
-    );
-
-    process.exit(1);
+    if (update.message) {
+      await handleMessage(update.message);
+    } else if (update.callback_query) {
+      await handleCallback(update.callback_query);
+    }
+  } catch (error) {
+    console.error("Update handling error:", error.message);
   }
-}
+});
 
-startServer();
+// ========================================
+// HEALTH CHECK
+// ========================================
+
+app.get("/", (req, res) => {
+  res.send(
+    "Waamara Bot is running. " +
+    "Botichi seenaa Nabiyyootaa fi Sahaabota Afaan Oromoo fi Arabaa barsiisa."
+  );
+});
+
+app.get("/health", (req, res) => {
+  res.json({
+    status: "ok",
+    app: "Waamara",
+    service: "Seenaa Nabiyyootaa fi Sahaabota",
+    languages: ["Afaan Oromoo", "العربية"],
+    prophets: PROPHETS.length - 1,
+    companions: COMPANIONS.length,
+    lessons: LESSONS.length,
+    quiz_questions: QUIZ.length,
+    webhook_configured: Boolean(RENDER_URL && BOT_TOKEN)
+  });
+});
+
+// ========================================
+// START SERVER & SET WEBHOOK
+// ========================================
+
+app.listen(PORT, async () => {
+  console.log(`Waamara server running on port ${PORT}`);
+
+  if (!BOT_TOKEN) {
+    console.error("ERROR: TELEGRAM_BOT_TOKEN Render keessatti hin kaa'amne.");
+    return;
+  }
+
+  if (!RENDER_URL) {
+    console.error("ERROR: RENDER_EXTERNAL_URL Render keessatti hin jiru.");
+    return;
+  }
+
+  try {
+    const webhookUrl = `${RENDER_URL}/telegram/webhook`;
+
+    const body = {
+      url: webhookUrl,
+      allowed_updates: ["message", "callback_query"],
+      drop_pending_updates: false
+    };
+
+    if (WEBHOOK_SECRET) {
+      body.secret_token = WEBHOOK_SECRET;
+    }
+
+    const result = await telegram("setWebhook", body);
+
+    if (result.ok) {
+      console.log("Waamara Telegram webhook configured successfully.");
+    } else {
+      console.error("Webhook setup failed:", result.description);
+    }
+  } catch (error) {
+    console.error("Webhook setup error:", error.message);
+  }
+});
