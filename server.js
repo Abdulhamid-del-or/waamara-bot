@@ -1,420 +1,367 @@
 const express = require("express");
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+app.use(express.json());
 
+const PORT = process.env.PORT || 10000;
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const RENDER_URL = (process.env.RENDER_EXTERNAL_URL || "").replace(/\/+$/, "");
+const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 
-app.use(express.json({ limit: "1mb" }));
+const API = `https://api.telegram.org/bot${BOT_TOKEN || ""}`;
 
 // ========================================
-// WAAMARA BOT - SEENAA NABIYYOOTAA
-// Afaan Oromoo fi Afaan Arabaa
+// 1. SEENAA NABIIYYOOTAA
+// Afaan Oromoo + Afaan Arabaa
 // ========================================
 
-const MAIN_MENU = {
-  keyboard: [
-    [{ text: "📚 Seenaa Nabiyyootaa" }, { text: "🤍 Seenaa Sahaabota" }],
-    [{ text: "🌙 Seenaa Nabiyyii ﷺ" }, { text: "👩 Dubartoota Sahaabota" }],
-    [{ text: "🕌 Barnoota Islaamaa" }, { text: "❓ Gaaffii fi Deebii" }],
-    [{ text: "ℹ️ Waa'ee Botichaa" }]
-  ],
-  resize_keyboard: true
-};
-
-// ========================================
-// SEENAA NABIYYOOTA 25
-// ========================================
-
-const PROPHETS = [
+const prophets = [
   {
-    id: "adam",
-    name: "Aadam (آدم عليه السلام)",
-    om: "Aadam عليه السلام nama jalqabaa fi abbaa ilmaan namaa ti. Rabbiin isa uume; maqaa wantootaa isa barsiise. Rabbiin isaaf fi haadha manaa isaa Hawwaa jannata keessa jiraachuu ajaje. Seenaa Aadam Qur'aana keessatti bakka garaagaraatti argina.",
-    ar: "آدم عليه السلام هو أبو البشر، خلقه الله وعلّمه الأسماء، وأسكنه الجنة مع زوجته. ثم تاب الله عليه بعد توبته. وردت قصته في مواضع متعددة من القرآن.",
-    lesson: "Tawbaa, ajaja Rabbiitiif ajajamuu fi araarama Rabbii abdachuu.",
-    ref: "البقرة 30-39، طه 115-123"
+    name: "Aadam",
+    ar: "آدم عليه السلام",
+    om: "Nabii Aadam (AS) nama jalqabaa fi abbaa ilmaan namaa ti. Rabbiin isa uume; malaa'ikotaafis akka isaaf sujuudan ajaje. Seenaa isaa keessatti uumama namaa, tawbaa fi ajaja Rabbii kabajuun baranna.",
+    arabic: "آدم عليه السلام أبو البشر، خلقه الله تعالى وعلّمه، وأمر الملائكة بالسجود له. وفي قصته نتعلم التوبة وطاعة الله.",
+    source: "Al-Baqarah 2:30–39"
   },
   {
-    id: "idris",
-    name: "Idriis (إدريس عليه السلام)",
-    om: "Idriis عليه السلام Nabiyyii Rabbiin dhugaa fi nabiyyummaa isaatiin faarse dha. Qur'aanni isa dhugaa ba'aa fi Nabiyyii ta'uu isaa ibsa; bakka ol'aanaa geessuu isaas dubbata.",
-    ar: "إدريس عليه السلام نبيٌّ صدّيق، أثنى الله عليه بالصبر والصدق، وذكر أنه رفعه مكانًا عليًّا.",
-    lesson: "Dhugaa dubbachuu, obsuu fi hojii gaarii irratti cichuu.",
-    ref: "مريم 56-57، الأنبياء 85"
+    name: "Idriis",
+    ar: "إدريس عليه السلام",
+    om: "Nabii Idriis (AS) nama dhugaa dubbatu fi Nabiyyii ture. Qur'aanni isa dhugaa dubbataa fi sadarkaa ol'aanaatti ol kaafame jechuun isa ibsa.",
+    arabic: "إدريس عليه السلام كان صدّيقًا نبيًّا، وقد أثنى الله عليه وذكر أنه رفعه مكانًا عليًّا.",
+    source: "Maryam 19:56–57"
   },
   {
-    id: "nuh",
-    name: "Nuuh (نوح عليه السلام)",
-    om: "Nuuh عليه السلام ummata isaa yeroo dheeraaf gara Rabbiitti waame. Isaan keessaa namoonni muraasni amanan. Rabbiin amantoota doonii keessatti baraare; warri didan bishaaniin adabaman.",
-    ar: "دعا نوح عليه السلام قومه إلى عبادة الله زمنًا طويلًا، فكذّبه أكثرهم. فأمره الله بصنع السفينة، ونجّى المؤمنين وأهلك المكذبين بالطوفان.",
-    lesson: "Obsa, waamicha gara toltuutti itti fufuu fi Rabbiitti hirkachuu.",
-    ref: "سورة نوح، هود 25-49"
+    name: "Nuuh",
+    ar: "نوح عليه السلام",
+    om: "Nabii Nuuh (AS) ummata isaa gara Rabbiitti waame. Yeroo dheeraaf isaan gorse; warri amanan doonii seenuun balaa bishaan guddaa irraa baraaraman.",
+    arabic: "دعا نوح عليه السلام قومه إلى عبادة الله وحده، وصبر على أذاهم، ونجّى الله المؤمنين في السفينة.",
+    source: "Huud 11:25–49"
   },
   {
-    id: "hud",
-    name: "Huud (هود عليه السلام)",
-    om: "Huud عليه السلام gara ummata Aaditti ergaman. Ummanni isaanii humna isaanii boonu turan. Huud Rabbiin qofa akka gabbaran isaan waame; yeroo didan bubbee cimaadhaan adabaman.",
-    ar: "أرسل الله هودًا عليه السلام إلى قوم عاد، فدعاهم إلى توحيد الله وترك الكبر. فلما كذبوه أهلكهم الله بريح شديدة.",
-    lesson: "Of tuulummaa dhiisuu fi humna ofii irratti hin boonin.",
-    ref: "الأعراف 65-72، الحاقة 6-8"
+    name: "Huud",
+    ar: "هود عليه السلام",
+    om: "Nabii Huud (AS) gara ummata Aaditti ergame. Inni isaan Rabbiin qofa akka gabbaran waame; garuu hedduun isaanii didan.",
+    arabic: "أرسل الله هودًا عليه السلام إلى قوم عاد، فدعاهم إلى توحيد الله وترك الكبر.",
+    source: "Al-A'raaf 7:65–72"
   },
   {
-    id: "salih",
-    name: "Saalih (صالح عليه السلام)",
-    om: "Saalih عليه السلام ummata Samuuditti ergaman. Rabbiin gaala akka mallattoo taatu isaaniif kenne. Isaan garuu ajaja Rabbiitiin mormanii gaala sana miidhan; adabbii Rabbii isaan mudate.",
-    ar: "أرسل صالح عليه السلام إلى ثمود، وأيّد الله دعوته بالناقة آيةً لهم. لكنهم عقروها وكذّبوا نبيهم، فنزل بهم العذاب.",
-    lesson: "Mallattoolee Rabbii kabajuu fi ajaja isaa tuffachuu dhiisuu.",
-    ref: "الأعراف 73-79، الشمس 11-15"
+    name: "Saalih",
+    ar: "صالح عليه السلام",
+    om: "Nabii Saalih (AS) gara ummata Samuuditti ergame. Mallattoo Rabbiin kenneef keessaa gaalli dubartii ture; ummanni isaa ajaja Rabbiitti fincile.",
+    arabic: "أرسل الله صالحًا عليه السلام إلى ثمود، وجعل الناقة آية لهم، لكنهم عصوا أمر الله.",
+    source: "Al-A'raaf 7:73–79"
   },
   {
-    id: "ibrahim",
-    name: "Ibraahiim (إبراهيم عليه السلام)",
-    om: "Ibraahiim عليه السلام Rabbiin qofa gabbaruu irratti cichan. Sanamoota ummata isaanii didan. Rabbiin ibidda isaan irratti qabbanaa'aa fi nagaa akka taatu godhe. Ibraahiim fi Ismaa'iil Ka'baa ijaaran.",
-    ar: "دعا إبراهيم عليه السلام قومه إلى التوحيد ورفض عبادة الأصنام. وجعل الله النار عليه بردًا وسلامًا. ورفع إبراهيم وإسماعيل قواعد البيت الحرام.",
-    lesson: "Tawhiida, iimaana cimaa fi Rabbiif ajajamuu.",
-    ref: "البقرة 124-129، الأنبياء 51-70"
+    name: "Ibraahiim",
+    ar: "إبراهيم عليه السلام",
+    om: "Nabii Ibraahiim (AS) tawhiidaaf dhaabbatee waaqeffannaa sanamootaa morme. Rabbiin ibidda keessatti isa baraare. Inni Ismaa'iil waliin Ka'baa ijaare.",
+    arabic: "دعا إبراهيم عليه السلام إلى توحيد الله، ونجّاه الله من النار، ورفع مع إسماعيل قواعد الكعبة.",
+    source: "Al-Anbiyaa 21:51–70; Al-Baqarah 2:127"
   },
   {
-    id: "lut",
-    name: "Luux (لوط عليه السلام)",
-    om: "Luux عليه السلام ummata isaa gara qulqullummaa fi ajaja Rabbiitti waame. Isaan gorsa isaa didan. Rabbiin Luux fi maatii isaa keessaa warra amanan baraare; ummata isaa adabe.",
-    ar: "دعا لوط عليه السلام قومه إلى الطهارة وترك الفواحش، فكذبوه. فنجّى الله لوطًا وأهله المؤمنين، وأهلك القوم المجرمين.",
-    lesson: "Qulqullummaa, safuu fi gorsa haqaa fudhachuu.",
-    ref: "هود 77-83، الشعراء 160-175"
+    name: "Luux",
+    ar: "لوط عليه السلام",
+    om: "Nabii Luux (AS) ummata isaa gara waan gaarii fi qulqullinaatti waame. Inni hojii badaa isaanii irraa isaan akeekkachiise.",
+    arabic: "دعا لوط عليه السلام قومه إلى الطاعة والطهارة، وحذّرهم من الفواحش.",
+    source: "Huud 11:77–83"
   },
   {
-    id: "ismail",
-    name: "Ismaa'iil (إسماعيل عليه السلام)",
-    om: "Ismaa'iil عليه السلام ilma Ibraahiim ti. Qur'aanni isa waadaa eegu, obsa qabu fi maatii isaa salaataa fi zakaa ajajuun faarsa. Inni abbaa isaa waliin Ka'baa ijaaruu keessatti hirmaate.",
-    ar: "إسماعيل عليه السلام ابن إبراهيم، وصفه الله بصدق الوعد والصبر، وكان يأمر أهله بالصلاة والزكاة، وشارك أباه في رفع قواعد الكعبة.",
-    lesson: "Waadaa eeguu, obsa qabaachuu fi maatii barsiisuu.",
-    ref: "مريم 54-55، البقرة 127"
+    name: "Ismaa'iil",
+    ar: "إسماعيل عليه السلام",
+    om: "Nabii Ismaa'iil (AS) ilma Ibraahiim ti. Inni waadaa eegu, obsa qabaachuu fi ajaja Rabbii fudhachuu irratti fakkeenya gaarii ture.",
+    arabic: "كان إسماعيل عليه السلام صادق الوعد، وأمر أهله بالصلاة والزكاة.",
+    source: "Maryam 19:54–55"
   },
   {
-    id: "ishaq",
-    name: "Is'haaq (إسحاق عليه السلام)",
-    om: "Is'haaq عليه السلام ilma Ibraahiim fi abbaa Ya'aquub ti. Rabbiin Ibraahiim fi haadha manaa isaa Bishaaro Is'haaq kennuun gammachiise. Is'haaq Nabiyyii gaarii ture.",
-    ar: "إسحاق عليه السلام ابن إبراهيم، بشّر الله إبراهيم وزوجته به، وجعله نبيًّا من الصالحين.",
-    lesson: "Rahmata Rabbii abdachuu fi maatii gaarii ijaaruu.",
-    ref: "هود 71-73، الصافات 112-113"
+    name: "Is'haaq",
+    ar: "إسحاق عليه السلام",
+    om: "Nabii Is'haaq (AS) ilma Ibraahiim ti. Rabbiin Ibraahiimii fi Saaraa ilma kana isaan gammachiise.",
+    arabic: "وهب الله لإبراهيم عليه السلام إسحاق، وجعله نبيًّا من الصالحين.",
+    source: "Huud 11:71–73"
   },
   {
-    id: "yaqub",
-    name: "Ya'aquub (يعقوب عليه السلام)",
-    om: "Ya'aquub عليه السلام ilma Is'haaq ti; abbaa Yuusuf ti. Ilma isaa Yuusuf irraa adda ba'ee gadda guddaa keessa jiraatus Rabbiin irraa abdii hin kutanne.",
-    ar: "يعقوب عليه السلام أبو يوسف، صبر على فراق ابنه ولم ييأس من رحمة الله، وقال إنه يشكو بثّه وحزنه إلى الله.",
-    lesson: "Obsa bareedaa qabaachuu fi rahmata Rabbii irraa abdii kutachuu dhiisuu.",
-    ref: "يوسف 83-87"
+    name: "Ya'quub",
+    ar: "يعقوب عليه السلام",
+    om: "Nabii Ya'quub (AS) ilma Is'haaq ti. Inni abbaa Yuusuf ti. Yeroo rakkina guddaa keessa darbus Rabbiitti abdii hin kutanne.",
+    arabic: "يعقوب عليه السلام والد يوسف، وصبر على فراق ابنه، ولم يقنط من رحمة الله.",
+    source: "Yuusuf 12:83–87"
   },
   {
-    id: "yusuf",
-    name: "Yuusuf (يوسف عليه السلام)",
-    om: "Yuusuf عليه السلام obboloota isaa irraa rakkina arge; booda garbummaa fi hidhaa keessa darbe. Garuu Rabbiitti amanamee hamaa irraa of eeggata ture. Dhumarratti Rabbiin sadarkaa ol'aanaa isaaf kenne; obboloota isaa dhiiseef.",
-    ar: "ابتُلي يوسف عليه السلام بحسد إخوته ثم بالرق والسجن، لكنه صبر واتقى الله. ثم مكّنه الله في الأرض، وعفا عن إخوته.",
-    lesson: "Obsa, qulqullummaa, dhiifama fi Rabbiitti amanamuu.",
-    ref: "سورة يوسف"
+    name: "Yuusuf",
+    ar: "يوسف عليه السلام",
+    om: "Nabii Yuusuf (AS) obboloota isaatiin miidhame, garuu obse. Rakkoolee hedduu booda Rabbiin isaaf aangoo kenne; inni dhiifama gochuun fakkeenya ta'e.",
+    arabic: "ابتُلي يوسف عليه السلام، فصبر واتقى الله، ثم مكّنه الله في الأرض، وعفا عن إخوته.",
+    source: "Suuratu Yuusuf 12:4–101"
   },
   {
-    id: "ayyub",
-    name: "Ayyuub (أيوب عليه السلام)",
-    om: "Ayyuub عليه السلام rakkina guddaa keessa darban. Garuu Rabbiin hin komanne; obsanii kadhatan. Rabbiin rakkoo isaanii irraa isaan fayyise.",
-    ar: "ابتُلي أيوب عليه السلام بالضر، فصبر ولجأ إلى الله بالدعاء، فكشف الله ضرّه وردّ عليه أهله ورحمته.",
-    lesson: "Yeroo rakkoo keessatti obsa qabaachuu fi Rabbiitti kadhachuu.",
-    ref: "الأنبياء 83-84، ص 41-44"
+    name: "Shu'ayb",
+    ar: "شعيب عليه السلام",
+    om: "Nabii Shu'ayb (AS) ummata isaa daldala keessatti safartuu fi madaallii sirrii akka fayyadaman gorse.",
+    arabic: "دعا شعيب عليه السلام قومه إلى عبادة الله، والعدل في الكيل والميزان، وترك الظلم.",
+    source: "Huud 11:84–95"
   },
   {
-    id: "shuayb",
-    name: "Shu'aayb (شعيب عليه السلام)",
-    om: "Shu'aayb عليه السلام ummata Madyanitti ergaman. Isaan safartuu fi madaallii keessatti haqa akka eeganiif gorsan; saamicha fi gowwoomsaa irraa isaan dhoowwan.",
-    ar: "أرسل شعيب عليه السلام إلى مدين، فأمرهم بعبادة الله وإيفاء الكيل والميزان وترك الغش والفساد.",
-    lesson: "Daldala keessatti amanamummaa fi haqa eeguu.",
-    ref: "هود 84-95"
+    name: "Ayyuub",
+    ar: "أيوب عليه السلام",
+    om: "Nabii Ayyuub (AS) rakkoo cimaa keessa obsaan dhaabbate. Inni Rabbiin kadhate; Rabbiinis rahmata isaaf godhe.",
+    arabic: "ابتُلي أيوب عليه السلام، فصبر ودعا ربه، فكشف الله ضره ورحمه.",
+    source: "Al-Anbiyaa 21:83–84"
   },
   {
-    id: "musa",
-    name: "Muusaa (موسى عليه السلام)",
-    om: "Muusaa عليه السلام Fira'awna fi Banii Israa'iilitti ergaman. Rabbiin Muusaa mallattoolee hedduudhaan deeggere. Muusaan ummata isaa Fira'awna jalaa baase; Rabbiin galaana qooduun isaan baraare.",
-    ar: "أرسل الله موسى عليه السلام إلى فرعون، وأيّده بالآيات. ثم أنجى الله موسى وبني إسرائيل من فرعون وشقّ لهم البحر.",
-    lesson: "Zulmii mormuu, haqarratti cichuu fi Rabbiitti hirkachuu.",
-    ref: "طه، القصص، الشعراء"
+    name: "Dhul-Kifl",
+    ar: "ذو الكفل",
+    om: "Dhul-Kifl (AS) namoota gaggaarii keessaa akka ta'e Qur'aana keessatti dubbatame. Waa'ee isaa odeeffannoo dabalataa keessatti wanta mirkanaa'aa hin taane irraa of qusachuun barbaachisa.",
+    arabic: "ذكر الله ذا الكفل في جملة الصابرين والأخيار، وينبغي التثبت في تفاصيل قصته.",
+    source: "Al-Anbiyaa 21:85–86"
   },
   {
-    id: "harun",
-    name: "Haaruun (هارون عليه السلام)",
-    om: "Haaruun عليه السلام obboleessa Muusaa ti. Rabbiin isa Muusaa waliin ummata gara tawhiidaatti waamuuf erge. Inni gargaaraa fi Nabiyyii gaarii ture.",
-    ar: "هارون عليه السلام أخو موسى، جعله الله نبيًّا ووزيرًا لأخيه، فعاونه في دعوة فرعون وبني إسرائيل.",
-    lesson: "Obboleeyyan waliif gargaarsa ta'uu fi hojii gaarii keessatti wal deeggaruu.",
-    ref: "طه 29-36، مريم 53"
+    name: "Muusaa",
+    ar: "موسى عليه السلام",
+    om: "Nabii Muusaa (AS) gara Fir'awnitti ergame. Rabbiin isaaf mallattoolee kenne; Biyya galaanaa qooduun Muusaa fi ummata isaa baraare.",
+    arabic: "أرسل الله موسى عليه السلام إلى فرعون، وأيّده بالآيات، ونجّاه وبني إسرائيل من فرعون.",
+    source: "Taa-Haa 20:9–79"
   },
   {
-    id: "dhulkifl",
-    name: "Dhulkifl (ذو الكفل عليه السلام)",
-    om: "Dhulkifl عليه السلام Qur'aana keessatti maqaan isaanii namoota obsa qaban fi gaggaarii waliin dubbatame. Tafsiirri maqaa kana irratti ibsa garaagaraa qaba; waan Qur'aanni ifatti hin ibsine murteessinee hin dubbannu.",
-    ar: "ذو الكفل ذُكر في القرآن مع الصابرين والأخيار. ولم يذكر القرآن تفاصيل كثيرة عن قصته، لذلك لا نجزم بتفاصيل لم تثبت.",
-    lesson: "Obsa qabaachuu fi hojii gaarii irratti cichuu.",
-    ref: "الأنبياء 85-86، ص 48"
+    name: "Haaruun",
+    ar: "هارون عليه السلام",
+    om: "Nabii Haaruun (AS) obboleessa Muusaa ti. Muusaa waliin ummata isaanii gara Rabbiitti waamuuf gargaare.",
+    arabic: "كان هارون عليه السلام أخا موسى ووزيره في الدعوة إلى الله.",
+    source: "Taa-Haa 20:29–36"
   },
   {
-    id: "dawud",
-    name: "Daawud (داود عليه السلام)",
-    om: "Daawud عليه السلام Nabiyyii fi mootii ture. Rabbiin isaaf Zabuur kenne. Inni haqa irratti murteessa, Rabbiin faarsa ture; hojii fi murtii keessatti haqa eeguun beekama.",
-    ar: "آتَى الله داود عليه السلام الملك والحكمة والزبور، وأمره بالعدل في الحكم، وكان كثير العبادة والتسبيح.",
-    lesson: "Haqaan murteessuu, Rabbiin faarsuu fi amanamummaa.",
-    ref: "ص 17-26، الإسراء 55"
+    name: "Daawuud",
+    ar: "داود عليه السلام",
+    om: "Nabii Daawuud (AS) Rabbiin Nabiyyummaa fi mootummaa isaaf kenne. Inni haqaan murteessuu fi Rabbiin faarsuudhaan beekama.",
+    arabic: "آتَى الله داود عليه السلام النبوة والحكمة والملك، وأمره بالعدل.",
+    source: "Saad 38:17–26"
   },
   {
-    id: "sulayman",
-    name: "Sulaymaan (سليمان عليه السلام)",
-    om: "Sulaymaan عليه السلام ilma Daawud ti. Rabbiin mootummaa fi beekumsa guddaa isaaf kenne. Inni uumamtoota Rabbiin isaaf kenne sirnaan bulche; qophii fi murtii isaa keessatti hikmaa agarsiise.",
-    ar: "سليمان عليه السلام ابن داود، آتاه الله ملكًا عظيمًا وعلّمه، وسخّر له الريح والجن بإذن الله، وكان شاكرًا لنعمة ربه.",
-    lesson: "Nim'a Rabbii irratti galata galchuu fi aangoo haqaaf fayyadamuu.",
-    ref: "النمل 15-44، ص 30-40"
+    name: "Sulaymaan",
+    ar: "سليمان عليه السلام",
+    om: "Nabii Sulaymaan (AS) ilma Daawuud ti. Rabbiin beekumsa fi mootummaa guddaa isaaf kenne; inni kennaa Rabbiitiif galata galche.",
+    arabic: "وهب الله لسليمان عليه السلام ملكًا عظيمًا، فكان شاكرًا لنعمة الله.",
+    source: "An-Naml 27:15–44"
   },
   {
-    id: "ilyas",
-    name: "Ilyaas (إلياس عليه السلام)",
-    om: "Ilyaas عليه السلام ummata isaa gara Rabbiitti waame; waaqeffannaa Ba'al irraa isaan dhoowwe. Rabbiin isa nageenyaan faarsa.",
-    ar: "دعا إلياس عليه السلام قومه إلى عبادة الله وحده وترك عبادة بعل، فذكره الله في عباده المؤمنين.",
-    lesson: "Tawhiida irratti cichuu fi shirkii irraa fagaachuu.",
-    ref: "الصافات 123-132"
+    name: "Ilyaas",
+    ar: "إلياس عليه السلام",
+    om: "Nabii Ilyaas (AS) ummata isaa gara Rabbiin qofa gabbaruutti waame; waaqeffannaa sobaa irraa isaan akeekkachiise.",
+    arabic: "دعا إلياس عليه السلام قومه إلى عبادة الله وحده وترك عبادة البعل.",
+    source: "As-Saaffaat 37:123–132"
   },
   {
-    id: "alyasa",
-    name: "Al-Yasa'a (اليسع عليه السلام)",
-    om: "Al-Yasa'a عليه السلام Qur'aana keessatti maqaan isaanii Nabiyyoota gaggaarii keessaa dubbatame. Qur'aanni seenaa isaanii bal'inaan hin ibsu; kanaaf waan mirkanaa'e qofa ni dubbanna.",
-    ar: "اليسع عليه السلام من الأنبياء الذين ذكرهم الله في القرآن ضمن الأخيار، ولم تُذكر تفاصيل كثيرة عن قصته.",
-    lesson: "Namoota gaggaarii hordofuu fi ajaja Rabbiitti ajajamuu.",
-    ref: "الأنعام 86، ص 48"
+    name: "Al-Yasa'",
+    ar: "اليسع عليه السلام",
+    om: "Al-Yasa' (AS) Qur'aana keessatti maqaan isaa dubbatame. Rabbiin isa namoota gaggaarii keessaa taasise.",
+    arabic: "ذكر الله اليسع عليه السلام في جملة الأخيار.",
+    source: "Al-An'aam 6:86"
   },
   {
-    id: "yunus",
-    name: "Yuunus (يونس عليه السلام)",
-    om: "Yuunus عليه السلام ummata isaa biraa ba'anii, booda gara rakkoo guddaa seene. Gara Rabbiitti tawbaa fi kadhannaa godhe. Rabbiin isa baraare; ummanni isaas amanee fayyadame.",
-    ar: "ذهب يونس عليه السلام مغاضبًا، فابتلعه الحوت، فنادى ربه في الظلمات، فاستجاب الله له ونجّاه. وآمن قومه فانتفعوا بإيمانهم.",
-    lesson: "Yeroo rakkinaa Rabbiin kadhachuu fi tawbaa gochuu.",
-    ref: "الأنبياء 87-88، سورة يونس 98"
+    name: "Yuunus",
+    ar: "يونس عليه السلام",
+    om: "Nabii Yuunus (AS) gara ummata isaa ergame. Rakkoo keessa Rabbiin kadhate; Rabbiinis isa baraare.",
+    arabic: "دعا يونس عليه السلام ربه في الظلمات، فاستجاب الله له ونجّاه من الغم.",
+    source: "Al-Anbiyaa 21:87–88"
   },
   {
-    id: "zakariya",
-    name: "Zakariyyaa (زكريا عليه السلام)",
-    om: "Zakariyyaa عليه السلام Rabbiin ilma gaarii akka isaaf kennu kadhate. Umuriin isaanii guddaa ta'us, Rabbiin Yahyaa isaaf kenne.",
-    ar: "دعا زكريا عليه السلام ربه أن يهب له ولدًا صالحًا، فاستجاب الله دعاءه وبشّره بيحيى.",
-    lesson: "Du'aa'ii gochuu fi rahmata Rabbii abdachuu.",
-    ref: "آل عمران 38-41، مريم 2-11"
+    name: "Zakariyyaa",
+    ar: "زكريا عليه السلام",
+    om: "Nabii Zakariyyaa (AS) Rabbiin ilma gaarii isaaf akka kennu kadhate. Rabbiin kadhannaa isaa qeebalee Yahyaa isaaf kenne.",
+    arabic: "دعا زكريا عليه السلام ربه أن يهب له ولدًا صالحًا، فاستجاب الله له.",
+    source: "Maryam 19:2–11"
   },
   {
-    id: "yahya",
-    name: "Yahyaa (يحيى عليه السلام)",
-    om: "Yahyaa عليه السلام ilma Zakariyyaa ti. Rabbiin isa ijoollummaa irraa ogummaa fi qulqullummaa kenneef. Inni Nabiyyii gaggaarii fi abbaa haqaati.",
-    ar: "يحيى عليه السلام ابن زكريا، آتاه الله الحكم صبيًّا، وكان تقيًّا بارًّا بوالديه ولم يكن جبارًا عصيًّا.",
-    lesson: "Qulqullummaa, kabaja maatii fi beekumsa barbaaduu.",
-    ref: "مريم 12-15"
+    name: "Yahyaa",
+    ar: "يحيى عليه السلام",
+    om: "Nabii Yahyaa (AS) ilma Zakariyyaa ti. Rabbiin isaaf beekumsa, qulqullina fi gara-laafina kenne.",
+    arabic: "آتَى الله يحيى عليه السلام الحكم صبيًّا، وجعله بارًّا تقيًّا.",
+    source: "Maryam 19:12–15"
   },
   {
-    id: "isa",
-    name: "Iisaa (عيسى عليه السلام)",
-    om: "Iisaa عليه السلام ilma Maryam ti. Rabbiin isa abbaa malee uume; mallattoolee isaaf kenne. Iisaa ummata gara Rabbiitti waame. Akka amantii Islaamaatti Iisaa Nabiyyii Rabbiiti; Rabbiin hin ta'u.",
-    ar: "عيسى ابن مريم عبد الله ورسوله، خلقه الله من غير أب، وأيّده بالمعجزات بإذن الله، ودعا بني إسرائيل إلى عبادة الله وحده.",
-    lesson: "Rabbiin qofa gabbaruu, qulqullummaa fi rahmata.",
-    ref: "آل عمران 45-59، مريم 16-36"
+    name: "Iisaa",
+    ar: "عيسى عليه السلام",
+    om: "Nabii Iisaa (AS) ilma Maryam ti. Rabbiin isa mallattoolee kenne; Iisaan ummata isaa gara Rabbiitti waame. Muslimaaf Iisaan gabricha Rabbii fi Ergamaa Isaa ti.",
+    arabic: "عيسى ابن مريم عبد الله ورسوله، أرسله الله إلى بني إسرائيل وأيّده بالآيات.",
+    source: "Aali-Imraan 3:45–55"
   },
   {
-    id: "muhammad",
-    name: "Muhammad ﷺ (محمد صلى الله عليه وسلم)",
-    om: "Muhammad ﷺ Nabiyyii fi Ergaa Rabbii isa dhumaa dha. Makkaa keessatti dhalatan. Umrii waggaa 40tti wahyiin jalqabame. Booda Madiinaatti hijraa godhan. Qur'aanni isaan irratti bu'e; ummata tawhiida, haqa, rahmata fi amala gaariitti waaman.",
-    ar: "محمد صلى الله عليه وسلم خاتم الأنبياء والمرسلين. وُلد بمكة، ونزل عليه الوحي وهو ابن أربعين سنة، ثم هاجر إلى المدينة، وبلّغ رسالة الإسلام ودعا إلى التوحيد والرحمة ومكارم الأخلاق.",
-    lesson: "Sunnah isaanii hordofuu, rahmata qabaachuu fi amala gaarii qabaachuu.",
-    ref: "الأحزاب 40، العلق 1-5، التوبة 128"
-  },
-  {
-    id: "ismail_extra",
-    name: "Yaadannoo: Nabiyyoota 25",
-    om: "Maqaaleen Nabiyyoota 25 Qur'aana keessatti beekaman: Aadam, Idriis, Nuuh, Huud, Saalih, Ibraahiim, Luux, Ismaa'iil, Is'haaq, Ya'aquub, Yuusuf, Ayyuub, Shu'aayb, Muusaa, Haaruun, Dhulkifl, Daawud, Sulaymaan, Ilyaas, Al-Yasa'a, Yuunus, Zakariyyaa, Yahyaa, Iisaa fi Muhammad ﷺ.",
-    ar: "الأنبياء الخمسة والعشرون المذكورون بأسمائهم في القرآن: آدم، إدريس، نوح، هود، صالح، إبراهيم، لوط، إسماعيل، إسحاق، يعقوب، يوسف، أيوب، شعيب، موسى، هارون، ذو الكفل، داود، سليمان، إلياس، اليسع، يونس، زكريا، يحيى، عيسى، ومحمد صلى الله عليهم وسلم.",
-    lesson: "Maqaalee Nabiyyoota Qur'aana keessatti dubbataman irra deebi'ii baradhu.",
-    ref: "القرآن الكريم"
+    name: "Muhammad",
+    ar: "محمد ﷺ",
+    om: "Nabii Muhammad ﷺ Ergamaa Rabbii isa dhumaa ti. Qur'aanni isa irratti bu'e. Inni tawhiida, rahmata, haqaa fi amala gaariitti ummata waame.",
+    arabic: "محمد ﷺ رسول الله وخاتم النبيين، أنزل الله عليه القرآن هدايةً ورحمةً للعالمين.",
+    source: "Al-Ahzaab 33:40; Al-Anbiyaa 21:107"
   }
 ];
 
 // ========================================
-// SEENAA SAHAABOTAA
+// 2. SAHAABOTA
 // ========================================
 
-const COMPANIONS = [
+const companions = [
   {
-    id: "abu_bakr",
-    name: "Abuu Bakr (أبو بكر الصديق رضي الله عنه)",
-    om: "Abuu Bakr رضي الله عنه hiriyyaa dhihoo Nabiyyii Muhammad ﷺ fi namoota jalqaba amanan keessaa tokko ture. Hijraa keessatti Nabiyyii waliin ture. Erga Nabiyyii ﷺ du'anii booda Khaliifaa jalqabaa ta'e.",
-    ar: "أبو بكر الصديق رضي الله عنه صاحب النبي ﷺ وأول الخلفاء الراشدين. رافق النبي في الهجرة، وعُرف بالصدق والإيمان والثبات.",
-    lesson: "Dhugaa dubbachuu, amanamummaa fi hiriyyaa gaarii ta'uu."
+    name: "Abuu Bakr As-Siddiiq",
+    ar: "أبو بكر الصديق رضي الله عنه",
+    om: "Abuu Bakr (RA) michuu dhugaa Nabii Muhammad ﷺ fi Khaliifaa jalqabaa Muslimootaa ture. Dhugaa irratti dhaabbachuu fi amanamummaa isaatiin beekama.",
+    arabic: "أبو بكر الصديق رضي الله عنه صاحب النبي ﷺ، وأول الخلفاء الراشدين، عُرف بالصدق والثبات.",
+    source: "At-Tawbah 9:40"
   },
   {
-    id: "umar",
-    name: "Umar ibn Al-Khattaab (عمر بن الخطاب رضي الله عنه)",
-    om: "Umar رضي الله عنه Khaliifaa lammaffaa ture. Haqa, murtii sirrii fi bulchiinsa cimaadhaan beekama. Muslimootaaf tajaajila guddaa kenne.",
-    ar: "عمر بن الخطاب رضي الله عنه ثاني الخلفاء الراشدين، اشتهر بالعدل والقوة في الحق، وعمل على إقامة العدل ورعاية شؤون المسلمين.",
-    lesson: "Haqa eeguu, itti gaafatamummaa fi nama hundaaf haqa ta'uu."
+    name: "Umar ibn Al-Khattaab",
+    ar: "عمر بن الخطاب رضي الله عنه",
+    om: "Umar (RA) Khaliifaa lammaffaa ture. Haqaa, murtii sirrii fi bulchiinsa haqaa irratti fakkeenya gaarii ture.",
+    arabic: "عمر بن الخطاب رضي الله عنه ثاني الخلفاء الراشدين، اشتهر بالعدل والقوة في الحق.",
+    source: "Seenaa sahaabota keessatti beekama"
   },
   {
-    id: "uthman",
-    name: "Usmaan ibn Affaan (عثمان بن عفان رضي الله عنه)",
-    om: "Usmaan رضي الله عنه Khaliifaa sadaffaa ture. Qabeenya isaa hojii toltuu keessatti baase. Qur'aana walitti qindeessuu fi koppii isaa babal'isuu keessatti gahee guddaa qaba.",
-    ar: "عثمان بن عفان رضي الله عنه ثالث الخلفاء الراشدين، عُرف بالحياء والكرم، وكان له دور عظيم في نسخ المصاحف وإرسالها إلى الأمصار.",
-    lesson: "Arjummaa, haya'ii fi Qur'aana tajaajiluu."
+    name: "Usmaan ibn Affaan",
+    ar: "عثمان بن عفان رضي الله عنه",
+    om: "Usmaan (RA) Khaliifaa sadaffaa ture. Arjaa fi nama Qur'aana tiksuu keessatti gahee guddaa qabu ture.",
+    arabic: "عثمان بن عفان رضي الله عنه ثالث الخلفاء الراشدين، عُرف بالحياء والكرم.",
+    source: "Seenaa sahaabota keessatti beekama"
   },
   {
-    id: "ali",
-    name: "Alii ibn Abii Xaalib (علي بن أبي طالب رضي الله عنه)",
-    om: "Alii رضي الله عنه ilma abbeeraa Nabiyyii ﷺ fi abbaa manaa Faaximaa ture. Beekumsa, gootummaa fi murtii sirriidhaan beekama. Khaliifaa afraffaa ture.",
-    ar: "علي بن أبي طالب رضي الله عنه ابن عم النبي ﷺ وزوج فاطمة، ورابع الخلفاء الراشدين. اشتهر بالشجاعة والعلم والحكمة.",
-    lesson: "Beekumsa barbaaduu, gootummaa fi hikmaa.",
+    name: "Alii ibn Abii Taalib",
+    ar: "علي بن أبي طالب رضي الله عنه",
+    om: "Alii (RA) ilma adeeraa Nabii Muhammad ﷺ fi abbaa manaa Faaximaa ture. Beekumsa, ija-jabina fi haqaan murteessuu isaatiin beekama.",
+    arabic: "علي بن أبي طالب رضي الله عنه ابن عم النبي ﷺ، عُرف بالعلم والشجاعة.",
+    source: "Seenaa sahaabota keessatti beekama"
   },
   {
-    id: "bilal",
-    name: "Bilaal ibn Rabaah (بلال بن رباح رضي الله عنه)",
-    om: "Bilaal رضي الله عنه Muslimoota jalqabaa keessaa ture. Sababa iimaana isaatiin rakkina arge; garuu tawhiida irratti ciche. Booda mu'azzina Nabiyyii ﷺ ta'e.",
-    ar: "بلال بن رباح رضي الله عنه من السابقين إلى الإسلام، تحمّل الأذى بسبب إيمانه وثبت على التوحيد، وكان من أشهر مؤذني النبي ﷺ.",
-    lesson: "Iimaana irratti cichuu fi rakkoo keessatti obsa qabaachuu."
+    name: "Bilal ibn Rabaah",
+    ar: "بلال بن رباح رضي الله عنه",
+    om: "Bilaal (RA) Muslimoota jalqabaa keessaa tokko ture. Rakkoo amantii isaa irratti isa mudate keessatti obsaan dhaabbate.",
+    arabic: "بلال بن رباح رضي الله عنه من السابقين إلى الإسلام، وصبر على الأذى في سبيل الله.",
+    source: "Seenaa sahaabota keessatti beekama"
   },
   {
-    id: "khadija",
-    name: "Khadiijaa (خديجة رضي الله عنها)",
-    om: "Khadiijaa رضي الله عنها haadha manaa jalqabaa Nabiyyii Muhammad ﷺ ti. Yeroo wahyiin jalqabu Nabiyyii deeggarte; qabeenya, jaalala fi gorsa isaaniif kennite.",
-    ar: "خديجة رضي الله عنها زوجة النبي ﷺ الأولى، آزرته عند نزول الوحي، وكانت مثالًا في الإيمان والوفاء والبذل.",
-    lesson: "Nama gaarii deeggaruu, amanamummaa fi obsa.",
+    name: "Khadijaa bint Khuwaylid",
+    ar: "خديجة بنت خويلد رضي الله عنها",
+    om: "Khadijaa (RA) haadha manaa Nabii Muhammad ﷺ isa jalqabaa ti. Yeroo wahyiin jalqabaa bu'e isa deeggarte.",
+    arabic: "خديجة رضي الله عنها زوج النبي ﷺ الأولى، وساندته عند بدء الوحي.",
+    source: "Sahiih Al-Bukhaarii, Kitaaba Bad' Al-Wahy"
   },
   {
-    id: "aisha",
-    name: "Aa'ishaa (عائشة رضي الله عنها)",
-    om: "Aa'ishaa رضي الله عنها haadha mu'mintootaa fi haadha manaa Nabiyyii ﷺ ti. Hadiisa hedduu dabarsite; Muslimoonni beekumsa amantii irraa baratan.",
-    ar: "عائشة رضي الله عنها أم المؤمنين، نقلت أحاديث كثيرة عن النبي ﷺ، وكانت من أعلم النساء في الفقه والحديث.",
-    lesson: "Beekumsa barachuu fi beekumsa sirriitti dabarsuu.",
+    name: "Aa'ishaa bint Abii Bakr",
+    ar: "عائشة رضي الله عنها",
+    om: "Aa'ishaan (RA) haadha warraa Nabii Muhammad ﷺ fi dubartii beekumsa hadiisaa keessatti gahee guddaa qabdu turte.",
+    arabic: "عائشة رضي الله عنها من أمهات المؤمنين، وكانت من أعلم الناس بالحديث والفقه.",
+    source: "Sahiih Al-Bukhaarii fi Sahiih Muslim"
   },
   {
-    id: "fatima",
-    name: "Faaximaa (فاطمة رضي الله عنها)",
-    om: "Faaximaa رضي الله عنها intala Nabiyyii Muhammad ﷺ ti. Amala gaarii, salphina jireenyaa fi jaalala maatii irratti fakkeenya gaarii turte.",
-    ar: "فاطمة رضي الله عنها ابنة النبي ﷺ، عُرفت بالفضل والقرب من أبيها، وكانت مثالًا في الصبر والعبادة والاهتمام بالأسرة.",
-    lesson: "Maatii kabajuu, salphina jireenyaa fi amala gaarii.",
+    name: "Faaximaa bint Muhammad",
+    ar: "فاطمة رضي الله عنها",
+    om: "Faaximaan (RA) intala Nabii Muhammad ﷺ ti. Amala gaarii fi maatii isheetiif kunuunsa gochuun beekamti.",
+    arabic: "فاطمة رضي الله عنها بنت رسول الله ﷺ، عُرفت بفضلها ومكانتها.",
+    source: "Sahiih Al-Bukhaarii"
   },
   {
-    id: "abdurrahman",
-    name: "Abdur-Rahmaan ibn Awf (عبد الرحمن بن عوف رضي الله عنه)",
-    om: "Abdur-Rahmaan ibn Awf رضي الله عنه Sahaabaa beekamaa fi daldalaa amanamaa ture. Qabeenya isaa hojii toltuu fi gargaaruu Muslimootaaf baase.",
-    ar: "عبد الرحمن بن عوف رضي الله عنه من كبار الصحابة، عُرف بالتجارة والأمانة والإنفاق في سبيل الله ومساعدة المحتاجين.",
-    lesson: "Hojii amanamaa, arjummaa fi gargaaruu namoota rakkatan.",
+    name: "Khaalid ibn Al-Waliid",
+    ar: "خالد بن الوليد رضي الله عنه",
+    om: "Khaalid (RA) sahaabaa hoggansa waraanaa keessatti beekama. Inni Muslimootaaf tajaajila guddaa kenne.",
+    arabic: "خالد بن الوليد رضي الله عنه من قادة المسلمين المشهورين بالشجاعة.",
+    source: "Seenaa sahaabota keessatti beekama"
   },
   {
-    id: "salman",
-    name: "Salmaan Al-Faarisii (سلمان الفارسي رضي الله عنه)",
-    om: "Salmaan Al-Faarisii رضي الله عنه dhugaa barbaaduuf imala dheeraa godhe; dhumarratti Islaama fudhate. Yaada isaa waraana Khandaq keessatti dhiheesse.",
-    ar: "سلمان الفارسي رضي الله عنه بحث عن الحق حتى هداه الله إلى الإسلام، وأشار بحفر الخندق في غزوة الأحزاب.",
-    lesson: "Dhugaa barbaaduu, barachuu fi yaada gaarii dhiheessuu.",
-  },
-  {
-    id: "khalid",
-    name: "Khaalid ibn Al-Waliid (خالد بن الوليد رضي الله عنه)",
-    om: "Khaalid ibn Al-Waliid رضي الله عنه ajajaa waraanaa beekamaa ture. Islaama erga fudhatee booda Muslimootaaf tajaajila guddaa kenne; gootummaa fi dandeettii hoggansaan beekama.",
-    ar: "خالد بن الوليد رضي الله عنه قائد عسكري مشهور، أسلم وخدم المسلمين، وعُرف بالشجاعة وحسن القيادة.",
-    lesson: "Dandeettii ofii hojii gaarii fi tajaajilaaf fayyadamuu.",
-  },
-  {
-    id: "zayd",
-    name: "Zayd ibn Haarithaa (زيد بن حارثة رضي الله عنه)",
-    om: "Zayd ibn Haarithaa رضي الله عنه Sahaabaa Nabiyyii ﷺ biratti jaallatamaa ture. Qur'aana keessatti maqaan Sahaabaa ifatti dubbatame isa qofa.",
-    ar: "زيد بن حارثة رضي الله عنه من أصحاب النبي ﷺ، وكان محبوبًا عنده، وهو الصحابي الوحيد الذي ذُكر اسمه صراحة في القرآن.",
-    lesson: "Amanamummaa, jaalala fi hojii gaarii.",
+    name: "Abdur-Rahmaan ibn Awf",
+    ar: "عبد الرحمن بن عوف رضي الله عنه",
+    om: "Abdur-Rahmaan ibn Awf (RA) sahaabaa arjaa fi daldala keessatti amanamaa ture. Qabeenya isaa keessaa hedduu karaa gaariitti arjoome.",
+    arabic: "عبد الرحمن بن عوف رضي الله عنه من العشرة المبشرين بالجنة، وعُرف بالسخاء.",
+    source: "Seenaa sahaabota keessatti beekama"
   }
 ];
 
 // ========================================
-// BARNOOTA ISLAAMAA
+// 3. QORMAATA ISLAAMAA
 // ========================================
 
-const LESSONS = [
-  {
-    id: "islam",
-    name: "أركان الإسلام - Arkaana Islaamaa",
-    om: "Arkaanni Islaamaa shan:\n1. Shahadaa ragaa bahuu.\n2. Salaata salaatuu.\n3. Zakaa kennuu.\n4. Ji'a Ramadaanaa soomuu.\n5. Nama dandeettii qabuuf Hajjii deemuu.",
-    ar: "أركان الإسلام خمسة: شهادة أن لا إله إلا الله وأن محمدًا رسول الله، وإقام الصلاة، وإيتاء الزكاة، وصوم رمضان، وحج البيت لمن استطاع إليه سبيلًا."
-  },
-  {
-    id: "iman",
-    name: "أركان الإيمان - Arkaana Iimaanaa",
-    om: "Arkaanni Iimaanaa ja'a:\n1. Rabbiitti amanuu.\n2. Malaa'ikoota isaatti amanuu.\n3. Kitaabota isaatti amanuu.\n4. Ergamtoota isaatti amanuu.\n5. Guyyaa Qiyaamaatti amanuu.\n6. Qadara gaarii fi hamaa Rabbiirraa ta'uu amanuu.",
-    ar: "أركان الإيمان ستة: الإيمان بالله، وملائكته، وكتبه، ورسله، واليوم الآخر، والقدر خيره وشره."
-  },
-  {
-    id: "salah",
-    name: "الصلاة - Salaata",
-    om: "Salaanni utubaa amantii Islaamaa keessaa isa guddaa dha. Salaata shanan yeroo isaanii keessatti, shuruutii fi arkaana isaanii eegnee salaatuun barbaachisaa dha. Akkaataa salaataa sirriitti barachuuf barsiisaa amanamaa irraa baradhu.",
-    ar: "الصلاة من أعظم شعائر الإسلام، ويجب أداء الصلوات الخمس في أوقاتها مع مراعاة شروطها وأركانها. ويُتعلم أداؤها الصحيح من أهل العلم الموثوقين."
-  }
-];
-
-// ========================================
-// GAAFFII FI DEEBII
-// ========================================
-
-const QUIZ = [
+const quizQuestions = [
   {
     q: "Nabiyyii dhumaa eenyu?",
-    a: ["Muusaa عليه السلام", "Iisaa عليه السلام", "Muhammad ﷺ"],
-    correct: 2,
-    ar: "من هو خاتم الأنبياء؟"
+    ar: "من هو خاتم الأنبياء؟",
+    options: ["Muusaa", "Iisaa", "Muhammad ﷺ"],
+    optionsAr: ["موسى", "عيسى", "محمد ﷺ"],
+    answer: 2,
+    explanation: "Muhammad ﷺ Ergamaa Rabbii isa dhumaa dha.",
+    explanationAr: "محمد ﷺ خاتم النبيين."
   },
   {
-    q: "Nabiyyii galaana keessatti rakkoo arge eenyu?",
-    a: ["Yuunus عليه السلام", "Yuusuf عليه السلام", "Idriis عليه السلام"],
-    correct: 0,
-    ar: "من النبي الذي التقمه الحوت؟"
+    q: "Nabiyyii doonii ijaare eenyu?",
+    ar: "من هو النبي الذي صنع السفينة؟",
+    options: ["Nuuh", "Yuusuf", "Daawuud"],
+    optionsAr: ["نوح", "يوسف", "داود"],
+    answer: 0,
+    explanation: "Nabii Nuuh (AS) doonii ijaare.",
+    explanationAr: "صنع نوح عليه السلام السفينة بأمر الله."
+  },
+  {
+    q: "Abbaan Yuusuf eenyu?",
+    ar: "من هو والد يوسف عليه السلام؟",
+    options: ["Ibraahiim", "Ya'quub", "Is'haaq"],
+    optionsAr: ["إبراهيم", "يعقوب", "إسحاق"],
+    answer: 1,
+    explanation: "Abbaan Nabii Yuusuf Ya'quub (AS) dha.",
+    explanationAr: "والد يوسف عليه السلام هو يعقوب."
   },
   {
     q: "Khaliifaan jalqabaa eenyu?",
-    a: ["Umar رضي الله عنه", "Abuu Bakr رضي الله عنه", "Alii رضي الله عنه"],
-    correct: 1,
-    ar: "من أول الخلفاء الراشدين؟"
+    ar: "من هو أول الخلفاء الراشدين؟",
+    options: ["Umar", "Alii", "Abuu Bakr"],
+    optionsAr: ["عمر", "علي", "أبو بكر"],
+    answer: 2,
+    explanation: "Abuu Bakr As-Siddiiq (RA) Khaliifaa jalqabaa ture.",
+    explanationAr: "أبو بكر الصديق رضي الله عنه أول الخلفاء الراشدين."
   },
   {
-    q: "Nabiyyii Muusaa obboleessi isaa eenyu?",
-    a: ["Haaruun عليه السلام", "Daawud عليه السلام", "Ismaa'iil عليه السلام"],
-    correct: 0,
-    ar: "من أخو موسى عليه السلام؟"
-  },
-  {
-    q: "Arkaanni Islaamaa meeqa?",
-    a: ["Shan", "Ja'a", "Torba"],
-    correct: 0,
-    ar: "كم عدد أركان الإسلام؟"
-  },
-  {
-    q: "Nabiyyii Ka'baa waliin ijaare ilma isaa eenyu?",
-    a: ["Yuusuf عليه السلام", "Ismaa'iil عليه السلام", "Yahyaa عليه السلام"],
-    correct: 1,
-    ar: "من ابن إبراهيم الذي شاركه في رفع قواعد الكعبة؟"
+    q: "Haadha manaa Nabii Muhammad ﷺ isa jalqabaa eenyu?",
+    ar: "من هي أول زوجات النبي ﷺ؟",
+    options: ["Aa'ishaa", "Khadijaa", "Hafsaa"],
+    optionsAr: ["عائشة", "خديجة", "حفصة"],
+    answer: 1,
+    explanation: "Khadijaa bint Khuwaylid (RA) dha.",
+    explanationAr: "خديجة بنت خويلد رضي الله عنها."
   }
 ];
 
 // ========================================
-// TELEGRAM API
+// 4. USER SESSION
 // ========================================
 
-async function telegram(method, body = {}) {
-  if (!BOT_TOKEN) {
-    throw new Error("TELEGRAM_BOT_TOKEN hin kaa'amne.");
+// Hubannoo: session kun memory keessa jira.
+// Render restart yoo ta'e qabxiin duraanii ni bada.
+// Database malee yeroo bot hojjetu qofa tura.
+
+const sessions = new Map();
+
+function getSession(chatId) {
+  if (!sessions.has(chatId)) {
+    sessions.set(chatId, {
+      lang: "both",
+      quizIndex: 0,
+      score: 0,
+      inQuiz: false,
+      quizCount: 0
+    });
   }
 
-  const response = await fetch(
-    `https://api.telegram.org/bot${BOT_TOKEN}/${method}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    }
-  );
+  return sessions.get(chatId);
+}
+
+// ========================================
+// 5. TELEGRAM API
+// ========================================
+
+async function telegram(method, body) {
+  if (!BOT_TOKEN) {
+    throw new Error("TELEGRAM_BOT_TOKEN hin argamne.");
+  }
+
+  const response = await fetch(`${API}/${method}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
 
   const data = await response.json();
 
@@ -425,472 +372,419 @@ async function telegram(method, body = {}) {
   return data;
 }
 
-async function sendMessage(chatId, text, extra = {}) {
-  return telegram("sendMessage", {
+async function sendMessage(chatId, text, replyMarkup) {
+  const body = {
     chat_id: chatId,
     text,
-    ...extra
-  });
+    disable_web_page_preview: true
+  };
+
+  if (replyMarkup) {
+    body.reply_markup = replyMarkup;
+  }
+
+  return telegram("sendMessage", body);
 }
 
-async function answerCallback(callbackId, text = "") {
-  return telegram("answerCallbackQuery", {
-    callback_query_id: callbackId,
-    text
-  });
-}
-
-function inlineKeyboard(rows) {
+function mainKeyboard() {
   return {
-    inline_keyboard: rows.map(row =>
-      row.map(button => ({
-        text: button.text,
-        callback_data: button.data
-      }))
-    )
+    keyboard: [
+      ["📖 Nabiyyoota", "🕌 Sahaabota"],
+      ["📝 Qormaata", "🔍 Barbaadi"],
+      ["🇪🇹 Afaan Oromoo", "🇸🇦 Afaan Arabaa"],
+      ["🌐 Afaan Lamaan", "ℹ️ Gargaarsa"]
+    ],
+    resize_keyboard: true
   };
 }
 
-function homeButton() {
-  return [{ text: "🏠 Menu Guddaa", data: "home" }];
+function languageText(session, om, ar) {
+  if (session.lang === "om") return om;
+  if (session.lang === "ar") return ar;
+  return `${om}\n\n━━━━━━━━━━━━━━\n\n${ar}`;
 }
 
 // ========================================
-// MENU FI LISTAA
+// 6. START / MENU
 // ========================================
 
-function prophetsKeyboard() {
-  const rows = [];
+async function showMenu(chatId) {
+  const session = getSession(chatId);
 
-  for (let i = 0; i < PROPHETS.length; i += 2) {
-    rows.push(
-      PROPHETS.slice(i, i + 2).map(p => ({
-        text: p.name,
-        data: `prophet:${p.id}`
-      }))
-    );
-  }
+  const welcome = languageText(
+    session,
+    "Assalaamu alaykum! 🌙\n\nBaga gara Waamaraatti dhuftan.\n\nAs keessatti seenaa Nabiyyootaa, Sahaabota, barnoota Islaamaa fi qormaata argattu.",
+    "السلام عليكم ورحمة الله وبركاته\n\nمرحبًا بكم في وامارا.\n\nيمكنكم هنا قراءة قصص الأنبياء والصحابة، وتعلم العلوم الإسلامية، وأداء الاختبارات."
+  );
 
-  rows.push(homeButton());
-  return inlineKeyboard(rows);
+  await sendMessage(chatId, welcome, mainKeyboard());
 }
 
-function companionsKeyboard() {
-  const rows = [];
-
-  for (let i = 0; i < COMPANIONS.length; i += 2) {
-    rows.push(
-      COMPANIONS.slice(i, i + 2).map(c => ({
-        text: c.name,
-        data: `companion:${c.id}`
-      }))
-    );
-  }
-
-  rows.push(homeButton());
-  return inlineKeyboard(rows);
-}
-
-function lessonsKeyboard() {
-  const rows = LESSONS.map(item => [
-    { text: item.name, data: `lesson:${item.id}` }
-  ]);
-
-  rows.push(homeButton());
-  return inlineKeyboard(rows);
-}
-
-async function showHome(chatId) {
-  const text =
-    "🌙 WAAMARA — وامارا\n\n" +
-    "Baga nagaan dhuftan!\n" +
-    "Seenaa Nabiyyootaa fi Sahaabota Afaan Oromoo fi Afaan Arabaa baradhaa.\n\n" +
-    "مرحبًا بكم في وامارا!\n" +
-    "تعلّموا قصص الأنبياء والصحابة باللغتين الأورومية والعربية.\n\n" +
-    "Maal barachuu barbaadda?";
-
-  return sendMessage(chatId, text, { reply_markup: MAIN_MENU });
-}
+// ========================================
+// 7. NABIIYYOOTA FI SAHAABOTA
+// ========================================
 
 async function showProphets(chatId) {
-  return sendMessage(
+  const session = getSession(chatId);
+
+  const buttons = prophets.map((p, index) => [{
+    text: `${index + 1}. ${p.name} | ${p.ar}`,
+    callback_data: `prophet:${index}`
+  }]);
+
+  await sendMessage(
     chatId,
-    "📚 SEENAA NABIYYOOTAA\n\nقصص الأنبياء\n\nNabiyyii barachuu barbaaddu filadhu.\nاختر اسم النبي:",
-    { reply_markup: prophetsKeyboard() }
+    languageText(
+      session,
+      "📖 Seenaa Nabiyyootaa\nNabiyyii barbaaddu filadhu:",
+      "📖 قصص الأنبياء\nاختر النبي الذي تريد معرفة قصته:"
+    ),
+    { inline_keyboard: buttons }
   );
 }
 
 async function showCompanions(chatId) {
-  return sendMessage(
+  const session = getSession(chatId);
+
+  const buttons = companions.map((c, index) => [{
+    text: c.name,
+    callback_data: `companion:${index}`
+  }]);
+
+  await sendMessage(
     chatId,
-    "🤍 SEENAA SAHAABOTAA\n\nقصص الصحابة\n\nSahaabaa barachuu barbaaddu filadhu.\nاختر اسم الصحابي أو الصحابية:",
-    { reply_markup: companionsKeyboard() }
+    languageText(
+      session,
+      "🕌 Seenaa Sahaabota\nSahaabaa barbaaddu filadhu:",
+      "🕌 قصص الصحابة\nاختر الصحابي أو الصحابية:"
+    ),
+    { inline_keyboard: buttons }
   );
 }
 
-async function showLessons(chatId) {
-  return sendMessage(
-    chatId,
-    "🕌 BARNOOTA ISLAAMAA\n\nالدروس الإسلامية\n\nBarnoota barbaaddu filadhu.",
-    { reply_markup: lessonsKeyboard() }
+async function showStory(chatId, story, title, session) {
+  const text = languageText(
+    session,
+    `📖 ${title}\n\n${story.om}\n\n📚 Madda: ${story.source}`,
+    `📖 ${story.ar}\n\n${story.arabic}\n\n📚 المصدر: ${story.source}`
   );
-}
 
-// ========================================
-// SEENAA TOKKO AGARSIISUU
-// ========================================
-
-async function showProphet(chatId, id) {
-  const item = PROPHETS.find(p => p.id === id);
-
-  if (!item) {
-    return sendMessage(chatId, "Seenaa kana argachuu hin dandeenye.");
-  }
-
-  const text =
-    "📚 " + item.name + "\n\n" +
-    "🇪🇹 AFAAN OROMOO\n" + item.om + "\n\n" +
-    "📖 Barumsa irraa argamu:\n" + item.lesson + "\n\n" +
-    "🇸🇦 العربية\n" + item.ar + "\n\n" +
-    "📚 المرجع القرآني:\n" + item.ref + "\n\n" +
-    "⚠️ Yaadachiisa: Seenaa kana keessatti wanti Qur'aana keessatti ifatti hin dhufne akka dhugaa mirkanaa'eetti hin dhiyaatu.";
-
-  return sendMessage(chatId, text, {
-    reply_markup: inlineKeyboard([
-      [
-        { text: "⬅️ Nabiyyoota", data: "prophets" },
-        { text: "🏠 Menu", data: "home" }
-      ]
-    ])
+  await sendMessage(chatId, text, {
+    inline_keyboard: [
+      [{ text: "⬅️ Menu", callback_data: "menu" }]
+    ]
   });
 }
 
-async function showCompanion(chatId, id) {
-  const item = COMPANIONS.find(c => c.id === id);
+// ========================================
+// 8. QORMAATA QABXII WALIIN
+// ========================================
 
-  if (!item) {
-    return sendMessage(chatId, "Seenaa Sahaabaa kana argachuu hin dandeenye.");
-  }
+async function startQuiz(chatId) {
+  const session = getSession(chatId);
 
-  const text =
-    "🤍 " + item.name + "\n\n" +
-    "🇪🇹 AFAAN OROMOO\n" + item.om + "\n\n" +
-    "📖 Barumsa irraa argamu:\n" + item.lesson + "\n\n" +
-    "🇸🇦 العربية\n" + item.ar + "\n\n" +
-    "📚 Odeeffannoon seenaa Sahaabaa Qur'aana, Hadiisa sahiiha fi kitaabota seenaa amanamoo irraa mirkaneeffamuu qaba.";
+  session.quizIndex = 0;
+  session.score = 0;
+  session.quizCount = quizQuestions.length;
+  session.inQuiz = true;
 
-  return sendMessage(chatId, text, {
-    reply_markup: inlineKeyboard([
-      [
-        { text: "⬅️ Sahaabota", data: "companions" },
-        { text: "🏠 Menu", data: "home" }
-      ]
-    ])
-  });
-}
-
-async function showLesson(chatId, id) {
-  const item = LESSONS.find(x => x.id === id);
-
-  if (!item) {
-    return sendMessage(chatId, "Barnoota kana argachuu hin dandeenye.");
-  }
-
-  return sendMessage(
+  await sendMessage(
     chatId,
-    "🕌 " + item.name + "\n\n" +
-    "🇪🇹 AFAAN OROMOO\n" + item.om + "\n\n" +
-    "🇸🇦 العربية\n" + item.ar,
-    {
-      reply_markup: inlineKeyboard([
-        [
-          { text: "⬅️ Barnoota", data: "lessons" },
-          { text: "🏠 Menu", data: "home" }
-        ]
-      ])
-    }
+    languageText(
+      session,
+      `📝 Qormaanni jalqabe!\nGaaffii ${quizQuestions.length} qabda.\nDeebii sirrii filadhu.`,
+      `📝 بدأ الاختبار!\nلديك ${quizQuestions.length} أسئلة.\nاختر الإجابة الصحيحة.`
+    )
   );
+
+  await sendQuizQuestion(chatId);
 }
 
-// ========================================
-// QUIZ
-// ========================================
+async function sendQuizQuestion(chatId) {
+  const session = getSession(chatId);
 
-async function startQuiz(chatId, index = 0) {
-  if (index >= QUIZ.length) {
-    return sendMessage(
-      chatId,
-      "🎉 Gaaffii fi deebii xumurtee jirta!\n\nأحسنت! انتهيت من الأسئلة.",
-      {
-        reply_markup: inlineKeyboard([
-          [{ text: "🔁 Irra deebi'i", data: "quiz:0" }],
-          homeButton()
-        ])
-      }
-    );
-  }
+  if (session.quizIndex >= quizQuestions.length) {
+    session.inQuiz = false;
 
-  const q = QUIZ[index];
-
-  const rows = q.a.map((answer, i) => [
-    {
-      text: answer,
-      data: `answer:${index}:${i}`
-    }
-  ]);
-
-  rows.push(homeButton());
-
-  return sendMessage(
-    chatId,
-    `❓ Gaaffii ${index + 1}/${QUIZ.length}\n\n${q.q}\n\n🇸🇦 ${q.ar}`,
-    { reply_markup: inlineKeyboard(rows) }
-  );
-}
-
-// ========================================
-// MESSAGE HANDLER
-// ========================================
-
-async function handleMessage(message) {
-  if (!message || !message.chat) return;
-
-  const chatId = message.chat.id;
-  const text = (message.text || "").trim();
-
-  if (text.startsWith("/start") || text === "🏠 Menu Guddaa") {
-    return showHome(chatId);
-  }
-
-  if (text === "/help") {
-    return sendMessage(
-      chatId,
-      "Waamara bot seenaa Nabiyyootaa fi Sahaabota barachuuf si gargaara.\n\n" +
-      "/start - Menu guddaa\n" +
-      "/prophets - Seenaa Nabiyyootaa\n" +
-      "/companions - Seenaa Sahaabota\n" +
-      "/quiz - Gaaffii fi deebii"
-    );
-  }
-
-  if (text === "/prophets" || text === "📚 Seenaa Nabiyyootaa") {
-    return showProphets(chatId);
-  }
-
-  if (text === "/companions" || text === "🤍 Seenaa Sahaabota") {
-    return showCompanions(chatId);
-  }
-
-  if (text === "🌙 Seenaa Nabiyyii ﷺ") {
-    return showProphet(chatId, "muhammad");
-  }
-
-  if (text === "👩 Dubartoota Sahaabota") {
-    return sendMessage(
-      chatId,
-      "👩 DUBARTOOTA SAHAABOTA\n\n" +
-      "اختاري الصحابية:\n\n" +
-      "1. Khadiijaa رضي الله عنها\n" +
-      "2. Aa'ishaa رضي الله عنها\n" +
-      "3. Faaximaa رضي الله عنها",
-      {
-        reply_markup: inlineKeyboard([
-          [{ text: "Khadiijaa", data: "companion:khadija" }],
-          [{ text: "Aa'ishaa", data: "companion:aisha" }],
-          [{ text: "Faaximaa", data: "companion:fatima" }],
-          homeButton()
-        ])
-      }
-    );
-  }
-
-  if (text === "🕌 Barnoota Islaamaa") {
-    return showLessons(chatId);
-  }
-
-  if (text === "❓ Gaaffii fi Deebii" || text === "/quiz") {
-    return startQuiz(chatId);
-  }
-
-  if (text === "ℹ️ Waa'ee Botichaa") {
-    return sendMessage(
-      chatId,
-      "🤖 WAAMARA\n\n" +
-      "Bot barnootaa seenaa Nabiyyootaa, Sahaabota fi barnoota Islaamaa Afaan Oromoo fi Afaan Arabaa barsiisuuf qophaa'e.\n\n" +
-      "بوت تعليمي لقصص الأنبياء والصحابة والدروس الإسلامية باللغتين الأورومية والعربية.",
-      { reply_markup: MAIN_MENU }
-    );
-  }
-
-  return sendMessage(
-    chatId,
-    "Filannoo kana hin hubanne. Mee button menu keessaa tokko filadhu.\n\nلم أفهم اختيارك، اختر من القائمة.",
-    { reply_markup: MAIN_MENU }
-  );
-}
-
-// ========================================
-// CALLBACK HANDLER
-// ========================================
-
-async function handleCallback(query) {
-  const data = query.data || "";
-  const chatId = query.message && query.message.chat.id;
-
-  await answerCallback(query.id);
-
-  if (!chatId) return;
-
-  if (data === "home") {
-    return showHome(chatId);
-  }
-
-  if (data === "prophets") {
-    return showProphets(chatId);
-  }
-
-  if (data === "companions") {
-    return showCompanions(chatId);
-  }
-
-  if (data === "lessons") {
-    return showLessons(chatId);
-  }
-
-  if (data.startsWith("prophet:")) {
-    return showProphet(chatId, data.slice("prophet:".length));
-  }
-
-  if (data.startsWith("companion:")) {
-    return showCompanion(chatId, data.slice("companion:".length));
-  }
-
-  if (data.startsWith("lesson:")) {
-    return showLesson(chatId, data.slice("lesson:".length));
-  }
-
-  if (data.startsWith("quiz:")) {
-    const index = Number(data.split(":")[1]) || 0;
-    return startQuiz(chatId, index);
-  }
-
-  if (data.startsWith("answer:")) {
-    const parts = data.split(":");
-    const questionIndex = Number(parts[1]);
-    const answerIndex = Number(parts[2]);
-    const question = QUIZ[questionIndex];
-
-    if (!question) {
-      return sendMessage(chatId, "Gaaffiin kun hin jiru.");
-    }
-
-    const correct = answerIndex === question.correct;
-
-    const resultText = correct
-      ? "✅ Sirrii dha! بارك الله فيك"
-      : "❌ Deebiin sirrii: " + question.a[question.correct];
+    const score = session.score;
+    const total = quizQuestions.length;
+    const percentage = Math.round((score / total) * 100);
 
     await sendMessage(
       chatId,
-      resultText + "\n\n" + question.ar
+      languageText(
+        session,
+        `🏆 Qormaanni xumurame!\n\n✅ Qabxii: ${score}/${total}\n📊 Dhibbeentaa: ${percentage}%\n\nGalatoomi hirmaachuu keetiif!`,
+        `🏆 انتهى الاختبار!\n\n✅ النتيجة: ${score}/${total}\n📊 النسبة: ${percentage}%\n\nشكرًا لمشاركتك!`
+      ),
+      mainKeyboard()
     );
 
-    return startQuiz(chatId, questionIndex + 1);
+    return;
+  }
+
+  const index = session.quizIndex;
+  const question = quizQuestions[index];
+
+  const buttons = question.options.map((option, i) => [{
+    text: `${String.fromCharCode(65 + i)}. ${session.lang === "ar" ? question.optionsAr[i] : option}`,
+    callback_data: `answer:${index}:${i}`
+  }]);
+
+  await sendMessage(
+    chatId,
+    languageText(
+      session,
+      `❓ Gaaffii ${index + 1}/${quizQuestions.length}\n\n${question.q}`,
+      `❓ السؤال ${index + 1}/${quizQuestions.length}\n\n${question.ar}`
+    ),
+    { inline_keyboard: buttons }
+  );
+}
+
+// ========================================
+// 9. CALLBACK HANDLER
+// ========================================
+
+async function handleCallback(callback) {
+  const chatId = callback.message.chat.id;
+  const data = callback.data || "";
+  const session = getSession(chatId);
+
+  await telegram("answerCallbackQuery", {
+    callback_query_id: callback.id
+  });
+
+  if (data === "menu") {
+    return showMenu(chatId);
+  }
+
+  if (data.startsWith("prophet:")) {
+    const index = Number(data.split(":")[1]);
+    const story = prophets[index];
+
+    if (!story) return;
+
+    return showStory(chatId, story, story.name, session);
+  }
+
+  if (data.startsWith("companion:")) {
+    const index = Number(data.split(":")[1]);
+    const story = companions[index];
+
+    if (!story) return;
+
+    return showStory(chatId, story, story.name, session);
+  }
+
+  if (data.startsWith("answer:")) {
+    if (!session.inQuiz) {
+      return sendMessage(
+        chatId,
+        "Qormaanni kun xumurameera. Qormaata haaraa jalqabi.",
+        mainKeyboard()
+      );
+    }
+
+    const parts = data.split(":");
+    const questionIndex = Number(parts[1]);
+    const answerIndex = Number(parts[2]);
+
+    if (questionIndex !== session.quizIndex) {
+      return sendMessage(chatId, "Gaaffiin kun duraan deebifameera.");
+    }
+
+    const question = quizQuestions[questionIndex];
+    const correct = answerIndex === question.answer;
+
+    if (correct) session.score++;
+
+    const feedback = languageText(
+      session,
+      correct
+        ? `✅ Deebiin sirrii dha!\n\n${question.explanation}`
+        : `❌ Deebiin sirrii miti.\n\nDeebiin sirrii: ${question.options[question.answer]}\n${question.explanation}`,
+      correct
+        ? `✅ إجابة صحيحة!\n\n${question.explanationAr}`
+        : `❌ إجابة غير صحيحة.\n\nالإجابة الصحيحة: ${question.optionsAr[question.answer]}\n${question.explanationAr}`
+    );
+
+    await sendMessage(chatId, feedback);
+
+    session.quizIndex++;
+
+    return sendQuizQuestion(chatId);
   }
 }
 
 // ========================================
-// WEBHOOK
+// 10. TEXT HANDLER
 // ========================================
 
-app.post("/telegram/webhook", async (req, res) => {
-  if (WEBHOOK_SECRET) {
-    const receivedSecret = req.get("X-Telegram-Bot-Api-Secret-Token");
+async function handleText(message) {
+  const chatId = message.chat.id;
+  const text = (message.text || "").trim();
+  const session = getSession(chatId);
 
-    if (receivedSecret !== WEBHOOK_SECRET) {
-      return res.status(403).send("Forbidden");
-    }
+  if (text === "/start" || text === "/menu") {
+    return showMenu(chatId);
   }
 
-  // Telegram deebii saffisaan argata.
+  if (text === "/help" || text === "ℹ️ Gargaarsa") {
+    return sendMessage(
+      chatId,
+      "Waamara fayyadamuuf:\n\n" +
+      "📖 Nabiyyoota — seenaa Nabiyyootaa\n" +
+      "🕌 Sahaabota — seenaa Sahaabota\n" +
+      "📝 Qormaata — qormaata qabxii waliin\n" +
+      "🔍 Barbaadi — maqaa barbaadi\n\n" +
+      "Afaan kee jijjiiruuf button afaanii fayyadami.",
+      mainKeyboard()
+    );
+  }
+
+  if (text === "🇪🇹 Afaan Oromoo") {
+    session.lang = "om";
+    return showMenu(chatId);
+  }
+
+  if (text === "🇸🇦 Afaan Arabaa") {
+    session.lang = "ar";
+    return showMenu(chatId);
+  }
+
+  if (text === "🌐 Afaan Lamaan") {
+    session.lang = "both";
+    return showMenu(chatId);
+  }
+
+  if (text === "📖 Nabiyyoota") {
+    return showProphets(chatId);
+  }
+
+  if (text === "🕌 Sahaabota") {
+    return showCompanions(chatId);
+  }
+
+  if (text === "📝 Qormaata") {
+    return startQuiz(chatId);
+  }
+
+  if (text === "🔍 Barbaadi" || text === "/search") {
+    return sendMessage(
+      chatId,
+      "Maqaa Nabiyyii ykn Sahaabaa barbaaddu barreessi.\n\nاكتب اسم النبي أو الصحابي الذي تبحث عنه."
+    );
+  }
+
+  const query = text.toLowerCase();
+
+  const prophet = prophets.find(p =>
+    p.name.toLowerCase().includes(query) ||
+    p.ar.toLowerCase().includes(query)
+  );
+
+  if (prophet) {
+    return showStory(chatId, prophet, prophet.name, session);
+  }
+
+  const companion = companions.find(c =>
+    c.name.toLowerCase().includes(query) ||
+    c.ar.toLowerCase().includes(query)
+  );
+
+  if (companion) {
+    return showStory(chatId, companion, companion.name, session);
+  }
+
+  return sendMessage(
+    chatId,
+    languageText(
+      session,
+      "Maqaan kun hin argamne. Maaloo maqaa Nabiyyii ykn Sahaabaa sirriitti barreessi, yookaan menu irraa filadhu.",
+      "لم نجد هذا الاسم. يرجى كتابة اسم النبي أو الصحابي بشكل صحيح، أو اختر من القائمة."
+    ),
+    mainKeyboard()
+  );
+}
+
+// ========================================
+// 11. ROUTES
+// ========================================
+
+app.get("/", (req, res) => {
+  res.send("Waamara Islamic Learning Bot is running.");
+});
+
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    app: "Waamara",
+    prophets: prophets.length,
+    companions: companions.length,
+    quizQuestions: quizQuestions.length
+  });
+});
+
+app.post("/telegram/webhook", async (req, res) => {
+  if (
+    WEBHOOK_SECRET &&
+    req.get("X-Telegram-Bot-Api-Secret-Token") !== WEBHOOK_SECRET
+  ) {
+    return res.sendStatus(403);
+  }
+
+  // Telegram response saffisaan deebisi.
   res.sendStatus(200);
 
   try {
     const update = req.body;
 
-    if (update.message) {
-      await handleMessage(update.message);
-    } else if (update.callback_query) {
+    if (update.callback_query) {
       await handleCallback(update.callback_query);
+    } else if (update.message && update.message.text) {
+      await handleText(update.message);
     }
   } catch (error) {
-    console.error("Update handling error:", error.message);
+    console.error("Webhook processing error:", error);
   }
 });
 
 // ========================================
-// HEALTH CHECK
+// 12. WEBHOOK SETUP
 // ========================================
 
-app.get("/", (req, res) => {
-  res.send(
-    "Waamara Bot is running. " +
-    "Botichi seenaa Nabiyyootaa fi Sahaabota Afaan Oromoo fi Arabaa barsiisa."
-  );
-});
-
-app.get("/health", (req, res) => {
-  res.json({
-    status: "ok",
-    app: "Waamara",
-    service: "Seenaa Nabiyyootaa fi Sahaabota",
-    languages: ["Afaan Oromoo", "العربية"],
-    prophets: PROPHETS.length - 1,
-    companions: COMPANIONS.length,
-    lessons: LESSONS.length,
-    quiz_questions: QUIZ.length,
-    webhook_configured: Boolean(RENDER_URL && BOT_TOKEN)
-  });
-});
-
-// ========================================
-// START SERVER & SET WEBHOOK
-// ========================================
-
-app.listen(PORT, async () => {
-  console.log(`Waamara server running on port ${PORT}`);
-
+async function setupWebhook() {
   if (!BOT_TOKEN) {
-    console.error("ERROR: TELEGRAM_BOT_TOKEN Render keessatti hin kaa'amne.");
+    console.error("TELEGRAM_BOT_TOKEN hin jiru.");
     return;
   }
 
   if (!RENDER_URL) {
-    console.error("ERROR: RENDER_EXTERNAL_URL Render keessatti hin jiru.");
+    console.error("RENDER_EXTERNAL_URL hin jiru.");
     return;
   }
 
-  try {
-    const webhookUrl = `${RENDER_URL}/telegram/webhook`;
+  const url = `${RENDER_URL.replace(/\/$/, "")}/telegram/webhook`;
 
-    const body = {
-      url: webhookUrl,
-      allowed_updates: ["message", "callback_query"],
-      drop_pending_updates: false
-    };
+  const body = {
+    url
+  };
 
-    if (WEBHOOK_SECRET) {
-      body.secret_token = WEBHOOK_SECRET;
-    }
-
-    const result = await telegram("setWebhook", body);
-
-    if (result.ok) {
-      console.log("Waamara Telegram webhook configured successfully.");
-    } else {
-      console.error("Webhook setup failed:", result.description);
-    }
-  } catch (error) {
-    console.error("Webhook setup error:", error.message);
+  if (WEBHOOK_SECRET) {
+    body.secret_token = WEBHOOK_SECRET;
   }
+
+  const result = await telegram("setWebhook", body);
+
+  console.log(
+    result.ok
+      ? "Waamara webhook successfully configured."
+      : "Webhook configuration failed."
+  );
+}
+
+app.listen(PORT, async () => {
+  console.log(`Waamara running on port ${PORT}`);
+  await setupWebhook();
 });
