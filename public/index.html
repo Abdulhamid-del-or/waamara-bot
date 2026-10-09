@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="om">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#087443">
+
+  <title>Waamara | Barnoota Islaamaa</title>
+
+  <style>
+    :root {
+      --green: #087443;
+      --dark-green: #064d2e;
+      --light-green: #eaf7ef;
+      --gold: #e6b84c;
+      --white: #ffffff;
+      --text: #20352a;
+      --muted: #6d7e73;
+      --border: #dce9df;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #f5f9f6;
+      color: var(--text);
+      font-family: Arial, sans-serif;
+    }
+
+    button, input {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    header {
+      background: linear-gradient(135deg, #064d2e, #0b8951);
+      color: white;
+      padding: 25px 18px 30px;
+      border-radius: 0 0 28px 28px;
+    }
+
+    .header-inner {
+      max-width: 1000px;
+      margin: auto;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo {
+      width: 55px;
+      height: 55px;
+      display: grid;
+      place-items: center;
+      background: white;
+      color: var(--green);
+      border-radius: 18px;
+      font-size: 29px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 27px;
+    }
+
+    .brand p {
+      margin: 5px 0 0;
+      color: #d8f3e2;
+      font-size: 13px;
+    }
+
+    .welcome {
+      margin-top: 25px;
+    }
+
+    .welcome h2 {
+      font-size: 25px;
+      line-height: 1.4;
+      margin-bottom: 8px;
+    }
+
+    .welcome p {
+      line-height: 1.7;
+      color: #e3f5e9;
+      font-size: 14px;
+    }
+
+    main {
+      max-width: 1000px;
+      margin: auto;
+      padding: 20px 15px 40px;
+    }
+
+    .section-title {
+      font-size: 19px;
+      margin: 25px 0 14px;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .card {
+      background: white;
+      padding: 18px 14px;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      box-shadow: 0 4px 14px #153f2410;
+      text-align: left;
+      color: var(--text);
+      min-height: 135px;
+      transition: transform .15s;
+    }
+
+    .card:active {
+      transform: scale(.98);
+    }
+
+    .card .icon {
+      display: block;
+      font-size: 28px;
+      margin-bottom: 12px;
+    }
+
+    .card strong {
+      display: block;
+      font-size: 15px;
+      margin-bottom: 7px;
+    }
+
+    .card small {
+      color: var(--muted);
+      line-height: 1.5;
+      font-size: 12px;
+    }
+
+    .panel {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 17px;
+      margin-top: 18px;
+      box-shadow: 0 4px 14px #153f240a;
+    }
+
+    .panel h3 {
+      margin-top: 0;
+    }
+
+    .search-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    input {
+      width: 100%;
+      min-width: 0;
+      padding: 13px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: var(--green);
+    }
+
+    .primary {
+      background: var(--green);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-weight: bold;
+    }
+
+    .secondary {
+      background: var(--light-green);
+      color: var(--dark-green);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 11px 14px;
+      font-weight: bold;
+    }
+
+    .list {
+      display: grid;
+      gap: 9px;
+      margin-top: 14px;
+    }
+
+    .list-item {
+      padding: 13px;
+      border: 1px solid var(--border);
+      background: #fbfdfb;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .list-item button {
+      flex-shrink: 0;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .muted {
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .question {
+      font-size: 18px;
+      font-weight: bold;
+      line-height: 1.6;
+    }
+
+    .answers {
+      display: grid;
+      gap: 10px;
+      margin: 17px 0;
+    }
+
+    .answer {
+      width: 100%;
+      text-align: left;
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: white;
+      color: var(--text);
+    }
+
+    .answer:hover {
+      border-color: var(--green);
+      background: var(--light-green);
+    }
+
+    .answer:disabled {
+      cursor: default;
+      opacity: .75;
+    }
+
+    .progress {
+      height: 8px;
+      background: #e6eee8;
+      border-radius: 20px;
+      overflow: hidden;
+      margin: 15px 0;
+    }
+
+    .progress div {
+      height: 100%;
+      width: 0;
+      background: var(--green);
+      transition: width .2s;
+    }
+
+    .score {
+      text-align: center;
+      padding: 20px 0;
+    }
+
+    .score-number {
+      font-size: 48px;
+      font-weight: bold;
+      color: var(--green);
+      margin: 12px 0;
+    }
+
+    .notice {
+      padding: 13px;
+      background: var(--light-green);
+      border-radius: 12px;
+      margin-top: 12px;
+      line-height: 1.6;
+    }
+
+    footer {
+      text-align: center;
+      padding: 25px 15px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (min-width: 700px) {
+      .cards {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      header {
+        padding: 32px 25px 38px;
+      }
+
+      .welcome h2 {
+        font-size: 32px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="brand">
+      <div class="logo">🌙</div>
+      <div>
+        <h1>Waamara</h1>
+        <p>منصة التعليم الإسلامي</p>
+      </div>
+    </div>
+
+    <div class="welcome">
+      <h2>بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</h2>
+      <h2>Baga gara Waamara dhuftan!</h2>
+      <p>
+        Barnoota Islaamaa baradhu, seenaa Nabiyyootaa fi Sahaabota
+        qoradhu, qormaata fudhadhu, qabxii kee ilaali.
+      </p>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <h2 class="section-title">📚 Kutaa Barnootaa</h2>
+
+  <div class="cards">
+
+    <button class="card" onclick="loadContent('prophet')">
+      <span class="icon">📖</span>
+      <strong>Seenaa Nabiyyootaa</strong>
+      <small>Nabiyyoota 25 baradhu.</small>
+    </button>
+
+    <button class="card" onclick="loadContent('companion')">
+      <span class="icon">🤝</span>
+      <strong>Seenaa Sahaabota</strong>
+      <small>Sahaabota beekamoo baradhu.</small>
+    </button>
+
+    <button class="card" onclick="startQuiz()">
+      <span class="icon">📝</span>
+      <strong>Qormaata Fudhadhu</strong>
+      <small>Gaaffiiwwan deebisi; qabxii kee ilaali.</small>
+    </button>
+
+    <button class="card" onclick="showLessons()">
+      <span class="icon">🎧</span>
+      <strong>Madda Barnootaa</strong>
+      <small>Qur'aanaa fi Hadiisa baradhu.</small>
+    </button>
+
+  </div>
+
+  <section class="panel">
+    <h3>🔎 Barbaacha</h3>
+
+    <div class="search-row">
+      <input
+        id="searchInput"
+        type="search"
+        placeholder="Maqaa Nabiyyii ykn Sahaabaa..."
+      >
+      <button class="primary" onclick="searchContent()">Barbaadi</button>
+    </div>
+
+    <p class="muted">
+      Maqaa Afaan Oromoo ykn Arabiffaan barreessi.
+    </p>
+  </section>
+
+  <section id="contentPanel" class="panel hidden">
+    <h3 id="contentTitle">📚 Barnoota</h3>
+    <p id="contentStatus" class="muted"></p>
+    <div id="contentList" class="list"></div>
+    <div id="contentDetail" class="notice hidden"></div>
+  </section>
+
+  <section id="quizPanel" class="panel hidden">
+    <h3>📝 Qormaata Waamara</h3>
+
+    <div id="quizStart">
+      <p class="muted">
+        Qormaanni gaaffii 10 qaba. Deebii sirrii filadhu.
+      </p>
+      <button class="primary" onclick="startQuiz()">Qormaata Jalqabi</button>
+    </div>
+
+    <div id="quizArea" class="hidden">
+      <p id="questionCounter" class="muted"></p>
+
+      <div class="progress">
+        <div id="progressBar"></div>
+      </div>
+
+      <p id="questionText" class="question"></p>
+      <div id="answers" class="answers"></div>
+      <p id="answerFeedback" class="muted"></p>
+
+      <button id="nextQuestion" class="primary hidden" onclick="nextQuestion()">
+        Itti Fufi
+      </button>
+    </div>
+
+    <div id="quizResult" class="hidden score">
+      <h3>🎉 Qormaanni xumurame!</h3>
+      <div id="scoreNumber" class="score-number">0/10</div>
+      <p id="scoreMessage"></p>
+      <button class="primary" onclick="startQuiz()">Qormaata Biraa</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h3>🤖 Telegram Bot</h3>
+    <p class="muted">
+      Barnoota dabalataa fi tajaajila Telegram argachuuf
+      Waamara Bot daawwadhu.
+    </p>
+
+    <a
+      href="https://t.me/"
+      target="_blank"
+      rel="noopener noreferrer"
+      class="primary"
+      style="display:inline-block;text-decoration:none"
+    >
+      Telegram Bani
+    </a>
+  </section>
+
+</main>
+
+<footer>
+  <strong>Waamara</strong> — Barnoota Islaamaa<br>
+  © 2026 Waamara. Barnootaaf, beekumsaaf fi guddinaaf.
+</footer>
+
+<script>
+  const API_BASE = "";
+
+  let currentQuestions = [];
+  let currentIndex = 0;
+  let selectedAnswers = [];
+  let quizSessionId = null;
+  let currentItems = [];
+
+  const $ = id => document.getElementById(id);
+
+  async function api(path, options = {}) {
+    const response = await fetch(API_BASE + path, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      }
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data.error || "Tajaajilli yeroo kana hin hojjenne.");
+    }
+
+    return data;
+  }
+
+  function showPanel(id) {
+    ["contentPanel", "quizPanel"].forEach(panelId => {
+      $(panelId).classList.add("hidden");
+    });
+
+    $(id).classList.remove("hidden");
+
+    $(id).scrollIntoView({
+      behavior: "smooth",
+      block: "start"
+    });
+  }
+
+  async function loadContent(type, search = "") {
+    showPanel("contentPanel");
+
+    $("contentTitle").textContent =
+      type === "prophet"
+        ? "📖 Seenaa Nabiyyootaa"
+        : "🤝 Seenaa Sahaabota";
+
+    $("contentStatus").textContent = "Barnoota fe'aa jira...";
+    $("contentList").replaceChildren();
+    $("contentDetail").classList.add("hidden");
+
+    try {
+      const query = new URLSearchParams({ type, search });
+      const data = await api("/api/content?" + query.toString());
+
+      currentItems = data.items || [];
+
+      $("contentStatus").textContent =
+        currentItems.length
+          ? `${currentItems.length} bu'aa argame. Maqaa tokko filadhu.`
+          : "Barnoonni barbaadame hin argamne.";
+
+      currentItems.forEach(item => {
+        const row = document.createElement("div");
+        row.className = "list-item";
+
+        const name = document.createElement("strong");
+        name.textContent = item.name + (item.ar ? " — " + item.ar : "");
+
+        const button = document.createElement("button");
+        button.className = "secondary";
+        button.textContent = "Ilaali";
+
+        button.addEventListener("click", () => {
+          showDetail(item, type);
+        });
+
+        row.append(name, button);
+        $("contentList").appendChild(row);
+      });
+
+    } catch (error) {
+      $("contentStatus").textContent = error.message;
+    }
+  }
+
+  function showDetail(item, type) {
+    const detail = $("contentDetail");
+    detail.replaceChildren();
+
+    const title = document.createElement("h3");
+    title.textContent = item.name;
+
+    const arabic = document.createElement("p");
+    arabic.textContent = item.ar || "";
+    arabic.style.fontSize = "22px";
+    arabic.style.direction = "rtl";
+
+    const description = document.createElement("p");
+    description.textContent =
+      type === "prophet"
+        ? "Maqaan kun maqaa Nabiyyii keessaa tokko. Seenaa isaa bal'inaan barachuuf madda Qur'aanaa fi kitaabota seenaa amanamoo fayyadami."
+        : "Maqaan kun maqaa Sahaabaa keessaa tokko. Seenaa isaa bal'inaan barachuuf kitaabota seenaa Islaamaa amanamoo fayyadami.";
+
+    const source = document.createElement("a");
+    source.href = type === "prophet"
+      ? "https://quran.com"
+      : "https://sunnah.com";
+    source.target = "_blank";
+    source.rel = "noopener noreferrer";
+    source.textContent = "Madda barnootaa bani";
+
+    detail.append(title, arabic, description, source);
+    detail.classList.remove("hidden");
+  }
+
+  async function searchContent() {
+    const term = $("searchInput").value.trim();
+
+    if (!term) {
+      alert("Maqaa barbaaddu barreessi.");
+      return;
+    }
+
+    await loadContent("prophet", term);
+
+    // Yoo Nabiyyii keessatti hin argamne, Sahaabota keessatti barbaadi.
+    if (!currentItems.length) {
+      await loadContent("companion", term);
+    }
+  }
+
+  async function showLessons() {
+    showPanel("contentPanel");
+
+    $("contentTitle").textContent = "🎧 Madda Barnootaa";
+    $("contentStatus").textContent = "Madda barnootaa armaan gadii fayyadami.";
+    $("contentList").replaceChildren();
+    $("contentDetail").classList.add("hidden");
+
+    const lessons = [
+      { name: "Qur'aana", url: "https://quran.com" },
+      { name: "Kitaabota Hadiisaa", url: "https://sunnah.com" }
+    ];
+
+    lessons.forEach(lesson => {
+      const row = document.createElement("div");
+      row.className = "list-item";
+
+      const name = document.createElement("strong");
+      name.textContent = lesson.name;
+
+      const link = document.createElement("a");
+      link.href = lesson.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.className = "secondary";
+      link.style.textDecoration = "none";
+      link.textContent = "Bani";
+
+      row.append(name, link);
+      $("contentList").appendChild(row);
+    });
+  }
+
+  async function startQuiz() {
+    showPanel("quizPanel");
+
+    $("quizStart").classList.remove("hidden");
+    $("quizArea").classList.add("hidden");
+    $("quizResult").classList.add("hidden");
+    $("quizStart").querySelector("button").disabled = true;
+
+    try {
+      const data = await api("/api/web/quiz/start", {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+
+      quizSessionId = data.sessionId;
+      currentQuestions = data.questions;
+      currentIndex = 0;
+      selectedAnswers = [];
+
+      $("quizStart").classList.add("hidden");
+      $("quizArea").classList.remove("hidden");
+
+      renderQuestion();
+
+    } catch (error) {
+      alert("Qormaata jalqabuun hin danda'amne: " + error.message);
+    } finally {
+      $("quizStart").querySelector("button").disabled = false;
+    }
+  }
+
+  function renderQuestion() {
+    const question = currentQuestions[currentIndex];
+
+    $("questionCounter").textContent =
+      `Gaaffii ${currentIndex + 1} / ${currentQuestions.length}`;
+
+    $("progressBar").style.width =
+      `${(currentIndex / currentQuestions.length) * 100}%`;
+
+    $("questionText").textContent = question.q;
+    $("answers").replaceChildren();
+    $("answerFeedback").textContent = "";
+    $("nextQuestion").classList.add("hidden");
+
+    question.options.forEach((option, index) => {
+      const button = document.createElement("button");
+      button.className = "answer";
+      button.textContent =
+        `${String.fromCharCode(65 + index)}. ${option}`;
+
+      button.addEventListener("click", () => selectAnswer(index));
+
+      $("answers").appendChild(button);
+    });
+  }
+
+  function selectAnswer(index) {
+    if (selectedAnswers[currentIndex] !== undefined) return;
+
+    selectedAnswers[currentIndex] = index;
+
+    document.querySelectorAll(".answer").forEach(button => {
+      button.disabled = true;
+    });
+
+    $("answerFeedback").textContent = "Deebiin kee galmaa'eera.";
+    $("nextQuestion").classList.remove("hidden");
+
+    $("nextQuestion").textContent =
+      currentIndex === currentQuestions.length - 1
+        ? "Bu'aa Ilaali"
+        : "Gaaffii Itti Aanu";
+  }
+
+  async function nextQuestion() {
+    if (selectedAnswers[currentIndex] === undefined) {
+      alert("Deebii tokko filadhu.");
+      return;
+    }
+
+    currentIndex++;
+
+    if (currentIndex < currentQuestions.length) {
+      renderQuestion();
+      return;
+    }
+
+    $("nextQuestion").disabled = true;
+
+    try {
+      const result = await api("/api/web/quiz/submit", {
+        method: "POST",
+        body: JSON.stringify({
+          sessionId: quizSessionId,
+          answers: selectedAnswers
+        })
+      });
+
+      $("quizArea").classList.add("hidden");
+      $("quizResult").classList.remove("hidden");
+
+      $("scoreNumber").textContent =
+        `${result.score}/${result.total}`;
+
+      $("scoreMessage").textContent =
+        `Dhibbeentaa kee: ${Number(result.percent).toFixed(1)}%. Qormaata fudhachuu keetiif galatoomi!`;
+
+    } catch (error) {
+      alert("Bu'aa galmeessuun hin danda'amne: " + error.message);
+    } finally {
+      $("nextQuestion").disabled = false;
+    }
+  }
+</script>
+
+</body>
+  </html>
