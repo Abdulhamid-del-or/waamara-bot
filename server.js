@@ -1,173 +1,243 @@
+"use strict";
+
 const express = require("express");
+const path = require("path");
+const crypto = require("crypto");
+const https = require("https");
 const { Pool } = require("pg");
 
 const app = express();
-app.use(express.json());
-
 const PORT = process.env.PORT || 10000;
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const DATABASE_URL = process.env.DATABASE_URL;
-const RENDER_URL = (process.env.RENDER_EXTERNAL_URL || "").replace(/\/$/, "");
+
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const DATABASE_URL = process.env.DATABASE_URL || "";
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || "";
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 
-const API = `https://api.telegram.org/bot${BOT_TOKEN || ""}`;
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true }));
 
-const pool = DATABASE_URL
-  ? new Pool({
+// Website: public/index.html
+app.use(express.static(path.join(__dirname, "public")));
+
+// Database
+let pool = null;
+
+if (DATABASE_URL) {
+  try {
+    pool = new Pool({
       connectionString: DATABASE_URL,
-      ssl:
-        process.env.NODE_ENV === "production"
-          ? { rejectUnauthorized: false }
-          : false,
+      ssl: DATABASE_URL.includes("localhost")
+        ? false
+        : { rejectUnauthorized: false },
+      connectionTimeoutMillis: 10000,
+      max: 5,
+      // IPv4 irratti akka hojjetu gargaara.
       family: 4
-    })
-  : null;
+    });
 
-const prophets = [
-  ["Aadam", "آدم"],
-  ["Idriis", "إدريس"],
-  ["Nuuh", "نوح"],
-  ["Huud", "هود"],
-  ["Saalih", "صالح"],
-  ["Ibraahiim", "إبراهيم"],
-  ["Luux", "لوط"],
-  ["Ismaa'iil", "إسماعيل"],
-  ["Is'haaq", "إسحاق"],
-  ["Ya'aquub", "يعقوب"],
-  ["Yuusuf", "يوسف"],
-  ["Shu'ayb", "شعيب"],
-  ["Ayyuub", "أيوب"],
-  ["Zul-Kifl", "ذو الكفل"],
-  ["Muusaa", "موسى"],
-  ["Haaruun", "هارون"],
-  ["Daawud", "داود"],
-  ["Sulaymaan", "سليمان"],
-  ["Ilyaas", "إلياس"],
-  ["Al-Yasa'", "اليسع"],
-  ["Yuunus", "يونس"],
-  ["Zakariyyaa", "زكريا"],
-  ["Yahyaa", "يحيى"],
-  ["Iisaa", "عيسى"],
-  ["Muhammad", "محمد"]
-].map(([name, ar]) => ({ name, ar }));
-
-const companions = [
-  ["Abuu Bakr As-Siddiiq", "أبو بكر الصديق"],
-  ["Umar ibn Al-Khattaab", "عمر بن الخطاب"],
-  ["Uthmaan ibn Affaan", "عثمان بن عفان"],
-  ["Ali ibn Abii Taalib", "علي بن أبي طالب"],
-  ["Talha ibn Ubaydillaah", "طلحة بن عبيد الله"],
-  ["Az-Zubayr ibn Al-Awwaam", "الزبير بن العوام"],
-  ["Abdur-Rahmaan ibn Awf", "عبد الرحمن بن عوف"],
-  ["Sa'd ibn Abii Waqqaas", "سعد بن أبي وقاص"],
-  ["Sa'iid ibn Zayd", "سعيد بن زيد"],
-  ["Abuu Ubaydah ibn Al-Jarraah", "أبو عبيدة بن الجراح"],
-  ["Bilaal ibn Rabaah", "بلال بن رباح"],
-  ["Salmān Al-Faarisii", "سلمان الفارسي"],
-  ["Abuu Dharr Al-Ghifaarii", "أبو ذر الغفاري"],
-  ["Khaalid ibn Al-Waliid", "خالد بن الوليد"],
-  ["Ammaar ibn Yaasir", "عمار بن ياسر"],
-  ["Yaasir ibn Aamir", "ياسر بن عامر"],
-  ["Sumayyah bint Khayyaat", "سمية بنت خياط"],
-  ["Mus'ab ibn Umayr", "مصعب بن عمير"],
-  ["Hamza ibn Abdul-Muttalib", "حمزة بن عبد المطلب"],
-  ["Ja'far ibn Abii Taalib", "جعفر بن أبي طالب"],
-  ["Abdullaah ibn Mas'uud", "عبد الله بن مسعود"],
-  ["Ubayy ibn Ka'b", "أبي بن كعب"],
-  ["Zayd ibn Thaabit", "زيد بن ثابت"],
-  ["Abuu Hurayrah", "أبو هريرة"],
-  ["Anas ibn Maalik", "أنس بن مالك"],
-  ["Abdullaah ibn Umar", "عبد الله بن عمر"],
-  ["Abdullaah ibn Abbaas", "عبد الله بن عباس"],
-  ["Aishah bint Abii Bakr", "عائشة بنت أبي بكر"],
-  ["Hafsah bint Umar", "حفصة بنت عمر"],
-  ["Ummu Salamah", "أم سلمة"],
-  ["Khadijah bint Khuwaylid", "خديجة بنت خويلد"],
-  ["Faatimah bint Muhammad", "فاطمة بنت محمد"],
-  ["Hasan ibn Ali", "الحسن بن علي"],
-  ["Husayn ibn Ali", "الحسين بن علي"],
-  ["Zayd ibn Haarithah", "زيد بن حارثة"],
-  ["Usaamah ibn Zayd", "أسامة بن زيد"],
-  ["Abdullaah ibn Rawaahah", "عبد الله بن رواحة"],
-  ["Ka'b ibn Maalik", "كعب بن مالك"],
-  ["Hanzalah ibn Abii Aamir", "حنظلة بن أبي عامر"],
-  ["Abuu Ayyuub Al-Ansaarī", "أبو أيوب الأنصاري"],
-  ["Sa'd ibn Mu'aadh", "سعد بن معاذ"],
-  ["Sa'd ibn Ubaadah", "سعد بن عبادة"],
-  ["Mu'aadh ibn Jabal", "معاذ بن جبل"],
-  ["Abuu Dardaa", "أبو الدرداء"],
-  ["Abuu Musa Al-Ash'arii", "أبو موسى الأشعري"],
-  ["Imraan ibn Husayn", "عمران بن حصين"],
-  ["Jariir ibn Abdillaah", "جرير بن عبد الله"],
-  ["Abdullaah ibn Amr ibn Al-Aas", "عبد الله بن عمرو بن العاص"],
-  ["Amr ibn Al-Aas", "عمرو بن العاص"],
-  ["Abuu Sufyaan ibn Harb", "أبو سفيان بن حرب"]
-].map(([name, ar]) => ({ name, ar }));
-
-const sessions = new Map();
-
-const lessons = [
-  { name: "Qur'aana", url: "https://quran.com" },
-  { name: "Hadiisa", url: "https://sunnah.com" }
-];
-
-async function telegram(method, payload = {}) {
-  if (!BOT_TOKEN) {
-    throw new Error("TELEGRAM_BOT_TOKEN hin qindaa'in.");
+    pool.on("error", (err) => {
+      console.error("Database pool error:", err.message);
+    });
+  } catch (error) {
+    console.error("Database setup error:", error.message);
   }
-
-  const response = await fetch(`${API}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-
-  const result = await response.json();
-
-  if (!result.ok) {
-    throw new Error(result.description || "Telegram API error");
-  }
-
-  return result.result;
+} else {
+  console.warn("DATABASE_URL hin argamne.");
 }
 
-async function sendMessage(chatId, text, reply_markup) {
+// ===============================
+// NABIIYYOOTA 25
+// ===============================
+
+const prophets = [
+  { name: "Aadam (آدم)", story: "Nabiyyii jalqabaa fi abbaa ilmaan namaa." },
+  { name: "Idriis (إدريس)", story: "Nabiyyii Rabbiin Qur'aana keessatti faarsedha." },
+  { name: "Nuuh (نوح)", story: "Ummata isaa gara Rabbii waame; doonii ijaare." },
+  { name: "Huud (هود)", story: "Gara ummata Aaditti ergame." },
+  { name: "Saalih (صالح)", story: "Gara ummata Samuuditti ergame." },
+  { name: "Ibraahiim (إبراهيم)", story: "Khalīlullaah; towhiidii barsiise." },
+  { name: "Luux (لوط)", story: "Gara ummata isaa ergame." },
+  { name: "Ismaa'iil (إسماعيل)", story: "Ilma Ibraahiim; obsa fi waadaa eeguun beekama." },
+  { name: "Is-haaq (إسحاق)", story: "Ilma Ibraahiim; nabiyyii ture." },
+  { name: "Ya'quub (يعقوب)", story: "Ilma Is-haaq; abbaa Yuusuf." },
+  { name: "Yuusuf (يوسف)", story: "Obsa, amanamummaa fi dhiifamaan beekama." },
+  { name: "Ay-yuub (أيوب)", story: "Obsa isaa keessatti fakkeenya guddaadha." },
+  { name: "Shu'ayb (شعيب)", story: "Gara ummata Madyanitti ergame." },
+  { name: "Muusaa (موسى)", story: "Rabbiin isa waliin dubbate; gara Fir'awnaatti ergame." },
+  { name: "Haaruun (هارون)", story: "Obboleessa Muusaa; nabiyyii ture." },
+  { name: "Dhul-Kifl (ذو الكفل)", story: "Nabiyyii Qur'aana keessatti dubbatame." },
+  { name: "Daawud (داود)", story: "Nabiyyii fi mootii; kitaaba Zabuur kennameef." },
+  { name: "Sulaymaan (سليمان)", story: "Ilma Daawud; Rabbiin mootummaa addaa kenneef." },
+  { name: "Ilyaas (إلياس)", story: "Gara ummata isaa waamicha tawhiidii geesse." },
+  { name: "Al-Yasa' (اليسع)", story: "Nabiyyii gaggaarii keessaa tokko." },
+  { name: "Yuunus (يونس)", story: "Qisaan isaa Qur'aana keessatti dubbatame." },
+  { name: "Zakariyyaa (زكريا)", story: "Nabiyyii Rabbiin gara isaa rahmata godhe." },
+  { name: "Yahyaa (يحيى)", story: "Ilma Zakariyyaa; Rabbiin isaaf hikmaa kenne." },
+  { name: "Iisaa (عيسى)", story: "Ilma Maryam; nabiyyii fi Rasuula Rabbii." },
+  { name: "Muhammad (محمد)", story: "Nabiyyii fi Rasuula dhumaa." }
+];
+
+// ===============================
+// SAHABOOTA
+// ===============================
+
+const companions = [
+  { name: "Abuu Bakr As-Siddiiq", story: "Sahaabaa guddaa fi khalifaa jalqabaa." },
+  { name: "Umar ibn Al-Khattaab", story: "Khalifaa lammaffaa; haqaan beekama." },
+  { name: "Uthmaan ibn Affaan", story: "Khalifaa sadaffaa; Qur'aana walitti qabuu keessatti gahee qaba." },
+  { name: "Ali ibn Abii Taalib", story: "Khalifaa afraffaa; ilma adeeraa Nabiyyii ﷺ." },
+  { name: "Talhah ibn Ubaydillaah", story: "Sahaabota Jannataan gammachiifaman keessaa tokko." },
+  { name: "Az-Zubayr ibn Al-Awwaam", story: "Sahaabaa fi loltuu Islaamaa." },
+  { name: "Abdur-Rahmaan ibn Awf", story: "Sahaabaa daldalaa fi arjaa." },
+  { name: "Sa'd ibn Abii Waqqaas", story: "Sahaabaa beekamaa fi loltuu." },
+  { name: "Saeed ibn Zayd", story: "Sahaabota Jannataan gammachiifaman keessaa tokko." },
+  { name: "Abuu Ubaydah ibn Al-Jarraah", story: "Amiinul-Ummah jedhamee beekama." },
+  { name: "Bilaal ibn Rabaah", story: "Mu'azzina Nabiyyii ﷺ." },
+  { name: "Salmmaan Al-Faarisii", story: "Sahaabaa beekamaa; yaada boolla qazuu dhiyeesse." },
+  { name: "Abuu Hurayrah", story: "Hadiisa baay'ee dabarse." },
+  { name: "Abdullaah ibn Abbaas", story: "Beekaa tafsiiraa fi sahaabaa." },
+  { name: "Abdullaah ibn Umar", story: "Hadiisa fi hordoffii Sunnah irratti beekama." },
+  { name: "Khaalid ibn Al-Waliid", story: "SaifuLlaah jedhamee beekama." },
+  { name: "Hamzah ibn Abdul-Muttalib", story: "Abbeeraa Nabiyyii ﷺ fi sahaabaa jabaa." },
+  { name: "Mus'ab ibn Umayr", story: "Islaama Madiina keessatti barsiisuu irratti gahee qaba." },
+  { name: "Zayd ibn Haarithah", story: "Sahaabaa Nabiyyii ﷺ biratti jaallatamaa." },
+  { name: "Usaamah ibn Zayd", story: "Ajajaa waraanaa ta'ee beekama." },
+  { name: "Anas ibn Maalik", story: "Nabiyyii ﷺ tajaajile; hadiisa dabarse." },
+  { name: "Jaabir ibn Abdullaah", story: "Sahaabaa hadiisa baay'ee dabarse." },
+  { name: "Mu'aadh ibn Jabal", story: "Beekaa halaalaa fi haraamaa." },
+  { name: "Hudhayfah ibn Al-Yamaan", story: "Sahaabaa odeeffannoo fitnaa beekuun beekama." },
+  { name: "Abuu Dharr Al-Ghifaarii", story: "Sahaabaa jireenya salphaa jaallatu." },
+  { name: "Ammmaar ibn Yaasir", story: "Sahaabaa dursee Islaama fudhate." },
+  { name: "Suhayb Ar-Ruumii", story: "Sahaabaa dursee Islaama fudhate." },
+  { name: "Salim Mawla Abii Hudhayfah", story: "Qur'aana qara'uu irratti beekama." },
+  { name: "Zayd ibn Thaabit", story: "Wahyii barreessuu fi Qur'aana walitti qabuu keessatti gahee qaba." },
+  { name: "Ubayy ibn Ka'b", story: "Qur'aana qara'uu irratti beekaa ture." },
+  { name: "Abdullaah ibn Mas'uud", story: "Qaraatii fi beekumsa Qur'aanaa irratti beekama." },
+  { name: "Abuu Ayyuub Al-Ansaar", story: "Nabiyyii ﷺ yeroo Madiina dhufe keessummeesse." },
+  { name: "Sa'd ibn Mu'aadh", story: "Sahaabaa Ansaar keessaa hogganaa." },
+  { name: "Usayd ibn Hudayr", story: "Sahaabaa Ansaar keessaa." },
+  { name: "Ja'far ibn Abii Taalib", story: "Obboleessa Ali; gara Habashaa godaane." },
+  { name: "Abdullaah ibn Rawaahah", story: "Sahaabaa fi shayiraa." },
+  { name: "Hassaan ibn Thaabit", story: "Shayiraa Nabiyyii ﷺ." },
+  { name: "Abuu Sufyaan ibn Harb", story: "Sahaabaa; Islaama booda Islaamaaf tajaajile." },
+  { name: "Ikrimah ibn Abii Jahl", story: "Sahaabaa; Islaama fudhatee Islaamaaf tajaajile." },
+  { name: "Safwaan ibn Umayyah", story: "Sahaabaa Islaama fudhate." },
+  { name: "Abdullaah ibn Salaam", story: "Islaama fudhate; beekaa ture." },
+  { name: "Tamim Ad-Daarii", story: "Sahaabaa; ibsa hadiisaa keessatti maqaan isaa dhufa." },
+  { name: "Abuu Musa Al-Ash'arii", story: "Qaraatii Qur'aanaa mi'aawaa qaba ture." },
+  { name: "Imraan ibn Husayn", story: "Sahaabaa hadiisa dabarse." },
+  { name: "Abuu Dardaa", story: "Beekaa fi barsiisaa Qur'aanaa." },
+  { name: "Abdullaah ibn Amr ibn Al-Aas", story: "Hadiisa barreessuu irratti beekama." },
+  { name: "Amr ibn Al-Aas", story: "Sahaabaa fi ajajaa waraanaa." },
+  { name: "Uqbah ibn Aamir", story: "Sahaabaa fi qara'aa Qur'aanaa." },
+  { name: "Abuu Qataadah Al-Ansaar", story: "Sahaabaa fi loltuu." },
+  { name: "Rifa'ah ibn Raafi'", story: "Sahaabaa Ansaar keessaa." }
+];
+
+// ===============================
+// TELEGRAM API
+// ===============================
+
+function telegramRequest(method, payload = {}) {
+  return new Promise((resolve, reject) => {
+    if (!BOT_TOKEN) {
+      return reject(new Error("TELEGRAM_BOT_TOKEN hin kaa'amne."));
+    }
+
+    const body = JSON.stringify(payload);
+
+    const req = https.request(
+      {
+        hostname: "api.telegram.org",
+        path: `/bot${BOT_TOKEN}/${method}`,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body)
+        },
+        timeout: 15000
+      },
+      (res) => {
+        let data = "";
+
+        res.on("data", (chunk) => {
+          data += chunk;
+        });
+
+        res.on("end", () => {
+          try {
+            const parsed = JSON.parse(data);
+
+            if (!parsed.ok) {
+              return reject(
+                new Error(parsed.description || "Telegram API error")
+              );
+            }
+
+            resolve(parsed.result);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      }
+    );
+
+    req.on("timeout", () => {
+      req.destroy(new Error("Telegram request timeout"));
+    });
+
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+async function sendMessage(chatId, text, keyboard = null) {
   const payload = {
     chat_id: chatId,
     text,
-    disable_web_page_preview: true
+    parse_mode: "HTML"
   };
 
-  if (reply_markup) {
-    payload.reply_markup = reply_markup;
+  if (keyboard) {
+    payload.reply_markup = keyboard;
   }
 
-  return telegram("sendMessage", payload);
+  return telegramRequest("sendMessage", payload);
+}
+
+async function answerCallbackQuery(callbackQueryId, text = "") {
+  try {
+    await telegramRequest("answerCallbackQuery", {
+      callback_query_id: callbackQueryId,
+      text
+    });
+  } catch (error) {
+    console.error("Callback answer error:", error.message);
+  }
 }
 
 function mainKeyboard() {
   return {
     keyboard: [
-      [
-        { text: "📖 Seenaa Nabiyyootaa" },
-        { text: "🤝 Seenaa Sahaabota" }
-      ],
-      [
-        { text: "📝 Qormaata Fudhadhu" },
-        { text: "🏆 Qabxii Koo" }
-      ],
-      [
-        { text: "🔎 Barbaadi" },
-        { text: "🎧 Barnoota" }
-      ],
-      [{ text: "ℹ️ Gargaarsa" }]
+      [{ text: "📖 Nabiyyoota 25" }, { text: "👥 Sahaboota" }],
+      [{ text: "📝 Qormaata" }, { text: "🏆 Qabxii Koo" }],
+      [{ text: "🔍 Barbaadi" }, { text: "🌐 Website" }]
     ],
     resize_keyboard: true
   };
 }
 
-async function initDatabase() {
-  if (!pool) return;
+// ===============================
+// DATABASE TABLE
+// ===============================
+
+async function initializeDatabase() {
+  if (!pool) {
+    console.warn("Database hin jiru; hojii DB barbaadu hin kuusu.");
+    return;
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS waamara_results (
@@ -181,147 +251,128 @@ async function initDatabase() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+
+  console.log("Database migrations completed.");
 }
 
-async function showList(chatId, type, page = 0) {
-  const list = type === "prophet" ? prophets : companions;
-  const size = 8;
-  const start = page * size;
+// ===============================
+// QUIZ BUILDER
+// ===============================
 
-  const rows = list.slice(start, start + size);
+function shuffle(array) {
+  const copy = [...array];
 
-  const buttons = rows.map((item, i) => [{
-    text: `${start + i + 1}. ${item.name}`,
-    callback_data: `${type}:${start + i}`
-  }]);
-
-  const nav = [];
-
-  if (page > 0) {
-    nav.push({
-      text: "⬅️ Dura",
-      callback_data: `${type}_page:${page - 1}`
-    });
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
   }
 
-  if (start + size < list.length) {
-    nav.push({
-      text: "Itti fufi ➡️",
-      callback_data: `${type}_page:${page + 1}`
-    });
-  }
-
-  if (nav.length) buttons.push(nav);
-
-  await sendMessage(
-    chatId,
-    type === "prophet"
-      ? "📖 Nabiyyii barbaaddu filadhu:"
-      : "🤝 Sahaabaa barbaaddu filadhu:",
-    { inline_keyboard: buttons }
-  );
-}
-
-async function showStory(chatId, item, type) {
-  const text =
-    type === "prophet"
-      ? `📖 Nabiyyii ${item.name} (${item.ar})\n\nMaqaan isaa seenaa Islaamaa keessatti beekamaa dha. Seenaa isaa bal'inaan Qur'aana fi kitaabota seenaa amanamoo irraa baradhu.\n\n📚 Madda: https://quran.com`
-      : `🤝 Sahaabaa ${item.name} (${item.ar})\n\nSahaabota Nabiyyii Muhammad (SAW) keessaa tokko. Seenaa sahaabota kitaabota seenaa Islaamaa amanamoo irraa baradhu.\n\n📚 Madda: https://sunnah.com`;
-
-  await sendMessage(chatId, text, {
-    inline_keyboard: [
-      [{ text: "⬅️ Gara menuutti", callback_data: "menu" }]
-    ]
-  });
+  return copy;
 }
 
 function buildQuiz() {
   const questions = [];
 
-  for (const p of prophets) {
+  const prophetPool = shuffle(prophets);
+
+  for (const prophet of prophetPool.slice(0, 5)) {
+    const wrong = shuffle(
+      prophets
+        .filter((item) => item.name !== prophet.name)
+        .map((item) => item.name)
+    ).slice(0, 3);
+
+    const options = shuffle([prophet.name, ...wrong]);
+
     questions.push({
-      q: `Maqaan Arabaa ${p.ar} jedhu Nabiyyii eenyu?`,
-      options: [p.name, "Muusaa", "Yuunus", "Nuuh"],
-      answer: p.name
+      q: "Nabiyyii kana keessaa eenyuudha? " + prophet.story,
+      options,
+      answer: options.indexOf(prophet.name)
     });
   }
 
-  for (const c of companions) {
+  const companionPool = shuffle(companions);
+
+  for (const companion of companionPool.slice(0, 5)) {
+    const wrong = shuffle(
+      companions
+        .filter((item) => item.name !== companion.name)
+        .map((item) => item.name)
+    ).slice(0, 3);
+
+    const options = shuffle([companion.name, ...wrong]);
+
     questions.push({
-      q: `Maqaan Arabaa ${c.ar} jedhu Sahaabaa kam?`,
-      options: [
-        c.name,
-        "Abuu Bakr As-Siddiiq",
-        "Umar ibn Al-Khattaab",
-        "Bilaal ibn Rabaah"
-      ],
-      answer: c.name
+      q: "Sahaabaa kana eenyu? " + companion.story,
+      options,
+      answer: options.indexOf(companion.name)
     });
   }
 
-  questions.push(
-    {
-      q: "Nabiyyii xumuraa eenyu?",
-      options: ["Muhammad", "Muusaa", "Iisaa", "Nuuh"],
-      answer: "Muhammad"
-    },
-    {
-      q: "Kitaabni Muslimootaaf bu'e maal jedhama?",
-      options: ["Qur'aana", "Tawraat", "Injiil", "Zabuur"],
-      answer: "Qur'aana"
-    },
-    {
-      q: "Arkāna Islaamaa meeqa?",
-      options: ["Shan", "Sadii", "Jaha", "Torba"],
-      answer: "Shan"
-    }
-  );
-
-  return questions.sort(() => Math.random() - 0.5).slice(0, 10);
+  return shuffle(questions);
 }
 
-async function startQuiz(chatId, user) {
-  sessions.set(String(chatId), {
-    quiz: buildQuiz(),
-    index: 0,
-    score: 0,
+// ===============================
+// TELEGRAM QUIZ SESSIONS
+// ===============================
+
+const telegramSessions = new Map();
+const webSessions = new Map();
+
+async function startTelegramQuiz(chatId, user) {
+  const questions = buildQuiz();
+
+  telegramSessions.set(String(chatId), {
     userId: String(user.id),
-    userName: user.first_name || ""
+    userName: user.first_name || "Barataa",
+    questions,
+    current: 0,
+    score: 0
   });
-
-  await sendQuizQuestion(chatId);
-}
-
-async function sendQuizQuestion(chatId) {
-  const session = sessions.get(String(chatId));
-
-  if (!session) return;
-
-  if (session.index >= session.quiz.length) {
-    return finishQuiz(chatId, session);
-  }
-
-  const q = session.quiz[session.index];
-
-  const options = [...q.options].sort(() => Math.random() - 0.5);
-
-  session.currentOptions = options;
-
-  const buttons = options.map((option, i) => [{
-    text: option,
-    callback_data: `answer:${session.index}:${i}`
-  }]);
 
   await sendMessage(
     chatId,
-    `❓ Gaaffii ${session.index + 1}/${session.quiz.length}\n\n${q.q}`,
-    { inline_keyboard: buttons }
+    "📝 <b>Qormaata Waamara</b>\n\nGaaffii 10 siif qopheesseera. Deebii sirrii filadhu.",
+    { remove_keyboard: true }
+  );
+
+  await sendTelegramQuestion(chatId);
+}
+
+async function sendTelegramQuestion(chatId) {
+  const session = telegramSessions.get(String(chatId));
+
+  if (!session) return;
+
+  if (session.current >= session.questions.length) {
+    return finishTelegramQuiz(chatId);
+  }
+
+  const question = session.questions[session.current];
+
+  const keyboard = {
+    inline_keyboard: question.options.map((option, index) => [
+      {
+        text: option,
+        callback_data: `quiz:${index}`
+      }
+    ])
+  };
+
+  await sendMessage(
+    chatId,
+    `❓ <b>Gaaffii ${session.current + 1}/${session.questions.length}</b>\n\n${question.q}`,
+    keyboard
   );
 }
 
-async function finishQuiz(chatId, session) {
-  const total = session.quiz.length;
-  const percent = total ? (session.score / total) * 100 : 0;
+async function finishTelegramQuiz(chatId) {
+  const session = telegramSessions.get(String(chatId));
+
+  if (!session) return;
+
+  const total = session.questions.length;
+  const percent = Number(((session.score / total) * 100).toFixed(2));
 
   if (pool) {
     try {
@@ -339,280 +390,588 @@ async function finishQuiz(chatId, session) {
         ]
       );
     } catch (error) {
-      console.error("Bu'aa kuusuu hin dandeenye:", error.message);
+      console.error("Quiz result save error:", error.message);
     }
   }
 
-  sessions.delete(String(chatId));
-
   await sendMessage(
     chatId,
-    `🏆 Qormaanni xumurame!\n\n✅ Sirrii: ${session.score}\n📝 Waliigala: ${total}\n📊 Dhibbeentaa: ${percent.toFixed(1)}%`,
-    {
-      inline_keyboard: [
-        [{ text: "🔁 Qormaata biraa", callback_data: "quiz" }],
-        [{ text: "🏠 Menu", callback_data: "menu" }]
-      ]
-    }
+    `🏆 <b>Qormaanni xumurame!</b>\n\n` +
+      `✅ Qabxii: ${session.score}/${total}\n` +
+      `📊 Dhibbeentaa: ${percent}%\n\n` +
+      `Galatoomi qormaata fudhachuu keetiif!`,
+    mainKeyboard()
   );
+
+  telegramSessions.delete(String(chatId));
 }
 
-async function showHistory(chatId, user) {
-  if (!pool) {
-    return sendMessage(
-      chatId,
-      "Database hin qindaa'in. Render Environment keessatti DATABASE_URL dabali."
+// ===============================
+// WEBSITE API: CONTENT
+// ===============================
+
+app.get("/api/content", (req, res) => {
+  const type = String(req.query.type || "prophet").toLowerCase();
+  const search = String(req.query.search || "").trim().toLowerCase();
+
+  let source;
+
+  if (type === "prophet" || type === "prophets") {
+    source = prophets;
+  } else if (type === "companion" || type === "companions") {
+    source = companions;
+  } else {
+    return res.status(400).json({
+      error: "type prophet ykn companion ta'uu qaba."
+    });
+  }
+
+  const filtered = source.filter((item) => {
+    return (
+      item.name.toLowerCase().includes(search) ||
+      item.story.toLowerCase().includes(search)
     );
+  });
+
+  return res.json({
+    type,
+    count: filtered.length,
+    items: filtered
+  });
+});
+
+// ===============================
+// WEBSITE API: START QUIZ
+// ===============================
+
+app.post("/api/web/quiz/start", (_req, res) => {
+  const sessionId = crypto.randomUUID();
+  const questions = buildQuiz();
+
+  webSessions.set(sessionId, {
+    questions,
+    createdAt: Date.now(),
+    completed: false
+  });
+
+  const safeQuestions = questions.map((question) => ({
+    q: question.q,
+    options: question.options
+  }));
+
+  res.json({
+    sessionId,
+    questions: safeQuestions
+  });
+});
+
+// ===============================
+// WEBSITE API: SUBMIT QUIZ
+// ===============================
+
+app.post("/api/web/quiz/submit", async (req, res) => {
+  const { sessionId, answers } = req.body || {};
+
+  if (!sessionId || !Array.isArray(answers)) {
+    return res.status(400).json({
+      error: "Session ID fi deebiiwwan barbaachisu."
+    });
+  }
+
+  const session = webSessions.get(String(sessionId));
+
+  if (!session) {
+    return res.status(404).json({
+      error: "Qormaanni hin argamne ykn yeroo isaa xumureera. Irra deebi'i."
+    });
+  }
+
+  // Session yeroo dheeraa ture yoo ta'e haqi.
+  if (Date.now() - session.createdAt > 60 * 60 * 1000) {
+    webSessions.delete(String(sessionId));
+
+    return res.status(410).json({
+      error: "Yeroon qormaataa xumurame. Irra deebi'i."
+    });
+  }
+
+  if (session.completed) {
+    return res.status(409).json({
+      error: "Qormaata kana duraan ergeetta."
+    });
+  }
+
+  if (answers.length !== session.questions.length) {
+    return res.status(400).json({
+      error: "Deebiiwwan gaaffii hundaaf ergi."
+    });
+  }
+
+  const validAnswers = answers.every(
+    (answer) =>
+      Number.isInteger(answer) &&
+      answer >= 0 &&
+      answer <= 3
+  );
+
+  if (!validAnswers) {
+    return res.status(400).json({
+      error: "Deebiiwwan sirrii hin taane."
+    });
+  }
+
+  let score = 0;
+
+  session.questions.forEach((question, index) => {
+    if (answers[index] === question.answer) {
+      score++;
+    }
+  });
+
+  const total = session.questions.length;
+  const percent = Number(((score / total) * 100).toFixed(2));
+
+  // Qormaata tokko yeroo tokko qofa erguu.
+  session.completed = true;
+
+  // Bu'aa kuusuuf DB barbaachisa.
+  if (!pool) {
+    webSessions.delete(String(sessionId));
+
+    return res.status(503).json({
+      error: "Database hin hidhamne. Bu'aa kuusuu hin dandeenye."
+    });
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO waamara_results
+       (telegram_user_id, chat_id, user_name, score, total, percent)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        `website:${sessionId}`,
+        "website",
+        "Website Student",
+        score,
+        total,
+        percent
+      ]
+    );
+
+    webSessions.delete(String(sessionId));
+
+    return res.json({
+      success: true,
+      score,
+      total,
+      percent,
+      message: "Qabxiin kee milkaa'inaan kuufameera."
+    });
+  } catch (error) {
+    console.error("Website result save error:", error.message);
+
+    session.completed = false;
+
+    return res.status(500).json({
+      error: "Bu'aa kuusuu hin dandeenye. Maaloo irra deebi'i."
+    });
+  }
+});
+
+// ===============================
+// WEBSITE API: RECENT RESULTS
+// ===============================
+
+app.get("/api/web/results", async (_req, res) => {
+  if (!pool) {
+    return res.status(503).json({
+      error: "Database hin hidhamne."
+    });
   }
 
   try {
     const result = await pool.query(
-      `SELECT score, total, percent, created_at
+      `SELECT user_name, score, total, percent, created_at
        FROM waamara_results
-       WHERE telegram_user_id = $1
        ORDER BY created_at DESC
-       LIMIT 10`,
-      [String(user.id)]
+       LIMIT 20`
     );
 
-    if (!result.rows.length) {
-      return sendMessage(
-        chatId,
-        "Bu'aan qormaataa hin jiru. Jalqaba qormaata fudhadhu."
-      );
-    }
-
-    const lines = result.rows.map((row, i) =>
-      `${i + 1}. ${row.score}/${row.total} — ${Number(row.percent).toFixed(1)}%`
-    );
-
-    await sendMessage(chatId, `🏆 Qabxii kee:\n\n${lines.join("\n")}`);
+    res.json({
+      count: result.rows.length,
+      results: result.rows
+    });
   } catch (error) {
-    console.error("History error:", error.message);
-    await sendMessage(chatId, "❌ Qabxii argachuun hin danda'amne.");
-  }
-}
+    console.error("Results query error:", error.message);
 
-async function searchContent(chatId, term) {
-  const q = term.toLowerCase().trim();
-
-  const p = prophets.filter(x =>
-    x.name.toLowerCase().includes(q) || x.ar.includes(q)
-  );
-
-  const c = companions.filter(x =>
-    x.name.toLowerCase().includes(q) || x.ar.includes(q)
-  );
-
-  const buttons = [];
-
-  p.slice(0, 5).forEach(item => {
-    buttons.push([{
-      text: `📖 ${item.name}`,
-      callback_data: `prophet:${prophets.indexOf(item)}`
-    }]);
-  });
-
-  c.slice(0, 5).forEach(item => {
-    buttons.push([{
-      text: `🤝 ${item.name}`,
-      callback_data: `companion:${companions.indexOf(item)}`
-    }]);
-  });
-
-  if (!buttons.length) {
-    return sendMessage(chatId, "Waan barbaadde hin arganne. Maqaa biraa yaali.");
-  }
-
-  await sendMessage(chatId, "🔎 Bu'aa barbaacha:", {
-    inline_keyboard: buttons
-  });
-}
-
-async function handleText(message) {
-  const chatId = message.chat.id;
-  const user = message.from || {};
-  const text = (message.text || "").trim();
-
-  if (text.startsWith("/start") || text.startsWith("/menu")) {
-    return sendMessage(
-      chatId,
-      `Assalaamu alaykum ${user.first_name || ""}! 👋\n\nBaga gara Waamaraatti dhuftan.\n\n📖 Seenaa Nabiyyootaa\n🤝 Seenaa Sahaabota\n📝 Qormaata\n🏆 Qabxii\n🔎 Barbaacha`,
-      mainKeyboard()
-    );
-  }
-
-  if (text === "📖 Seenaa Nabiyyootaa") return showList(chatId, "prophet");
-  if (text === "🤝 Seenaa Sahaabota") return showList(chatId, "companion");
-  if (text === "📝 Qormaata Fudhadhu") return startQuiz(chatId, user);
-  if (text === "🏆 Qabxii Koo") return showHistory(chatId, user);
-
-  if (text === "🎧 Barnoota") {
-    const buttons = lessons.map(item => [{
-      text: `🎧 ${item.name}`,
-      url: item.url
-    }]);
-
-    return sendMessage(chatId, "Madda barnootaa filadhu:", {
-      inline_keyboard: buttons
+    res.status(500).json({
+      error: "Bu'aa qormaataa argachuu hin dandeenye."
     });
   }
-
-  if (text === "🔎 Barbaadi") {
-    sessions.set(`search:${chatId}`, true);
-    return sendMessage(chatId, "Maqaa Nabiyyii ykn Sahaabaa barbaaddu barreessi.");
-  }
-
-  if (text === "ℹ️ Gargaarsa") {
-    return sendMessage(
-      chatId,
-      "Akka itti fayyadamtu:\n• Seenaa Nabiyyootaa filadhu.\n• Seenaa Sahaabota filadhu.\n• Qormaata fudhadhu.\n• Qabxii kee ilaali.\n• Barbaachaaf maqaa barreessi.",
-      mainKeyboard()
-    );
-  }
-
-  if (sessions.has(`search:${chatId}`)) {
-    sessions.delete(`search:${chatId}`);
-    return searchContent(chatId, text);
-  }
-
-  return sendMessage(chatId, "Menu keessaa filadhu ykn /start barreessi.", mainKeyboard());
-}
-
-async function handleCallback(callback) {
-  const chatId = callback.message.chat.id;
-  const user = callback.from || {};
-  const data = callback.data || "";
-
-  try {
-    await telegram("answerCallbackQuery", {
-      callback_query_id: callback.id
-    });
-  } catch (_) {}
-
-  if (data === "menu") {
-    return sendMessage(chatId, "🏠 Menu keessaa filadhu:", mainKeyboard());
-  }
-
-  if (data === "quiz") return startQuiz(chatId, user);
-
-  if (data.startsWith("prophet_page:")) {
-    return showList(chatId, "prophet", Number(data.split(":")[1]) || 0);
-  }
-
-  if (data.startsWith("companion_page:")) {
-    return showList(chatId, "companion", Number(data.split(":")[1]) || 0);
-  }
-
-  if (data.startsWith("prophet:")) {
-    const index = Number(data.split(":")[1]);
-    if (prophets[index]) return showStory(chatId, prophets[index], "prophet");
-  }
-
-  if (data.startsWith("companion:")) {
-    const index = Number(data.split(":")[1]);
-    if (companions[index]) return showStory(chatId, companions[index], "companion");
-  }
-
-  if (data.startsWith("answer:")) {
-    const session = sessions.get(String(chatId));
-    if (!session) {
-      return sendMessage(chatId, "Qormaanni xumurameera. Qormaata haaraa jalqabi.");
-    }
-
-    const [, questionIndex, optionIndex] = data.split(":");
-
-    if (Number(questionIndex) !== session.index) return;
-
-    const question = session.quiz[session.index];
-    const selected = session.currentOptions[Number(optionIndex)];
-
-    if (selected === question.answer) {
-      session.score += 1;
-      await sendMessage(chatId, "✅ Sirrii!");
-    } else {
-      await sendMessage(chatId, `❌ Deebiin sirrii: ${question.answer}`);
-    }
-
-    session.index += 1;
-    return sendQuizQuestion(chatId);
-  }
-}
-
-app.get("/", (_req, res) => {
-  res.status(200).send("Waamara Telegram Bot is running.");
 });
 
-app.get("/health", async (_req, res) => {
+// ===============================
+// TELEGRAM WEBHOOK
+// ===============================
+
+app.post("/telegram/webhook", async (req, res) => {
+  if (
+    WEBHOOK_SECRET &&
+    req.get("X-Telegram-Bot-Api-Secret-Token") !== WEBHOOK_SECRET
+  ) {
+    return res.sendStatus(403);
+  }
+
+  // Telegram irraa ergaa fudhatte.
+  res.sendStatus(200);
+
+  try {
+    const update = req.body;
+
+    if (update.callback_query) {
+      const callback = update.callback_query;
+      const chatId = callback.message?.chat?.id;
+
+      await answerCallbackQuery(callback.id);
+
+      if (!chatId) return;
+
+      const session = telegramSessions.get(String(chatId));
+
+      if (
+        callback.data &&
+        callback.data.startsWith("quiz:") &&
+        session
+      ) {
+        const chosen = Number(callback.data.split(":")[1]);
+        const question = session.questions[session.current];
+
+        if (chosen === question.answer) {
+          session.score++;
+        }
+
+        session.current++;
+        await sendTelegramQuestion(chatId);
+      }
+
+      return;
+    }
+
+    const message = update.message;
+
+    if (!message || !message.chat) return;
+
+    const chatId = message.chat.id;
+    const user = message.from || {};
+    const text = String(message.text || "").trim();
+
+    if (!text) return;
+
+    if (text === "/start" || text === "/menu") {
+      const welcome =
+        `👋 <b>Baga nagaan dhuftan Waamara!</b>\n\n` +
+        `Waamara keessatti:\n` +
+        `📖 Nabiyyoota baradhu\n` +
+        `👥 Sahaboota baradhu\n` +
+        `📝 Qormaata fudhadhu\n` +
+        `🏆 Qabxii kee ilaali\n\n` +
+        `Maal jalqabuu barbaadda?`;
+
+      await sendMessage(chatId, welcome, mainKeyboard());
+      return;
+    }
+
+    if (text === "📖 Nabiyyoota 25") {
+      const keyboard = {
+        inline_keyboard: prophets.map((prophet, index) => [
+          {
+            text: prophet.name,
+            callback_data: `prophet:${index}`
+          }
+        ])
+      };
+
+      await sendMessage(
+        chatId,
+        "📖 <b>Nabiyyoota Qur'aana keessatti dubbataman</b>\nMaqaa barbaadde filadhu:",
+        keyboard
+      );
+
+      return;
+    }
+
+    if (text === "👥 Sahaboota") {
+      const keyboard = {
+        inline_keyboard: companions.map((companion, index) => [
+          {
+            text: companion.name,
+            callback_data: `companion:${index}`
+          }
+        ])
+      };
+
+      await sendMessage(
+        chatId,
+        "👥 <b>Sahaboota</b>\nMaqaa sahaabaa barbaadde filadhu:",
+        keyboard
+      );
+
+      return;
+    }
+
+    if (text === "📝 Qormaata") {
+      await startTelegramQuiz(chatId, user);
+      return;
+    }
+
+    if (text === "🏆 Qabxii Koo") {
+      if (!pool) {
+        await sendMessage(
+          chatId,
+          "Database hin hidhamne; qabxii argachuu hin dandeenye.",
+          mainKeyboard()
+        );
+
+        return;
+      }
+
+      const result = await pool.query(
+        `SELECT score, total, percent, created_at
+         FROM waamara_results
+         WHERE telegram_user_id = $1
+         ORDER BY created_at DESC
+         LIMIT 5`,
+        [String(user.id)]
+      );
+
+      if (result.rows.length === 0) {
+        await sendMessage(
+          chatId,
+          "Qormaata fudhatte hin qabdu. 📝 Qormaata jalqabi!",
+          mainKeyboard()
+        );
+
+        return;
+      }
+
+      const history = result.rows
+        .map((row, index) => {
+          const date = new Date(row.created_at).toLocaleDateString("om-ET");
+
+          return `${index + 1}. ${row.score}/${row.total} (${row.percent}%) — ${date}`;
+        })
+        .join("\n");
+
+      await sendMessage(
+        chatId,
+        `🏆 <b>Qabxiiwwan kee dhiyoo</b>\n\n${history}`,
+        mainKeyboard()
+      );
+
+      return;
+    }
+
+    if (text === "🔍 Barbaadi") {
+      await sendMessage(
+        chatId,
+        "Maqaa Nabiyyii ykn Sahaabaa barbaadde barreessi."
+      );
+
+      return;
+    }
+
+    if (text === "🌐 Website") {
+      const website = RENDER_EXTERNAL_URL || "";
+
+      if (website) {
+        await sendMessage(
+          chatId,
+          `🌐 <b>Website Waamara</b>\n\n<a href="${website}">As tuqi website banuuf</a>`
+        );
+      } else {
+        await sendMessage(
+          chatId,
+          "Website link argachuuf RENDER_EXTERNAL_URL Render keessatti kaa'i."
+        );
+      }
+
+      return;
+    }
+
+    // Callback: Nabiyyii ykn Sahaabaa filachuu.
+    if (text.startsWith("/")) {
+      await sendMessage(
+        chatId,
+        "Ajaja kana hin beeku. /start barreessi.",
+        mainKeyboard()
+      );
+
+      return;
+    }
+
+    const search = text.toLowerCase();
+
+    const prophet = prophets.find(
+      (item) =>
+        item.name.toLowerCase().includes(search) ||
+        item.story.toLowerCase().includes(search)
+    );
+
+    if (prophet) {
+      await sendMessage(
+        chatId,
+        `📖 <b>${prophet.name}</b>\n\n${prophet.story}`,
+        mainKeyboard()
+      );
+
+      return;
+    }
+
+    const companion = companions.find(
+      (item) =>
+        item.name.toLowerCase().includes(search) ||
+        item.story.toLowerCase().includes(search)
+    );
+
+    if (companion) {
+      await sendMessage(
+        chatId,
+        `👥 <b>${companion.name}</b>\n\n${companion.story}`,
+        mainKeyboard()
+      );
+
+      return;
+    }
+
+    await sendMessage(
+      chatId,
+      "Maqaan sun hin argamne. Maqaa sirrii barreessi ykn /start fayyadami.",
+      mainKeyboard()
+    );
+  } catch (error) {
+    console.error("Telegram update error:", error.message);
+  }
+});
+
+// Handle inline buttons for prophets and companions.
+app.post("/telegram/callback", (_req, res) => {
+  res.sendStatus(200);
+});
+
+// ===============================
+// HEALTH / STATUS
+// ===============================
+
+app.get("/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    app: "Waamara",
+    website: "ready",
+    botConfigured: Boolean(BOT_TOKEN),
+    databaseConfigured: Boolean(pool),
+    time: new Date().toISOString()
+  });
+});
+
+app.get("/api/status", async (_req, res) => {
   let database = "not_configured";
 
   if (pool) {
     try {
       await pool.query("SELECT 1");
       database = "connected";
-    } catch (_) {
+    } catch (error) {
       database = "error";
+      console.error("Database status error:", error.message);
     }
   }
 
-  res.json({ ok: true, app: "Waamara", database });
+  res.status(database === "error" ? 503 : 200).json({
+    app: "Waamara",
+    website: "ready",
+    botConfigured: Boolean(BOT_TOKEN),
+    database,
+    time: new Date().toISOString()
+  });
 });
 
-app.post("/telegram/webhook", async (req, res) => {
-  if (WEBHOOK_SECRET) {
-    const secret = req.get("X-Telegram-Bot-Api-Secret-Token");
-    if (secret !== WEBHOOK_SECRET) return res.sendStatus(401);
-  }
+// ===============================
+// ROOT WEBSITE
+// ===============================
 
-  res.sendStatus(200);
-
-  try {
-    if (req.body.message) await handleText(req.body.message);
-    if (req.body.callback_query) await handleCallback(req.body.callback_query);
-  } catch (error) {
-    console.error("Update handling error:", error);
-  }
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });
+
+// ===============================
+// SET TELEGRAM WEBHOOK
+// ===============================
 
 async function configureWebhook() {
-  if (!BOT_TOKEN || !RENDER_URL) {
-    console.log("Webhook hin qindaa'in. TELEGRAM_BOT_TOKEN fi RENDER_EXTERNAL_URL ilaali.");
+  if (!BOT_TOKEN || !RENDER_EXTERNAL_URL) {
+    console.warn(
+      "Webhook hin qophoofne. TELEGRAM_BOT_TOKEN fi RENDER_EXTERNAL_URL mirkaneessi."
+    );
     return;
   }
 
-  const url = `${RENDER_URL}/telegram/webhook`;
-  const payload = { url };
+  const url = `${RENDER_EXTERNAL_URL.replace(/\/+$/, "")}/telegram/webhook`;
 
-  if (WEBHOOK_SECRET) payload.secret_token = WEBHOOK_SECRET;
+  const payload = {
+    url,
+    allowed_updates: ["message", "callback_query"]
+  };
 
-  const result = await telegram("setWebhook", payload);
-  console.log("Webhook configured:", result);
+  if (WEBHOOK_SECRET) {
+    payload.secret_token = WEBHOOK_SECRET;
+  }
+
+  try {
+    const result = await telegramRequest("setWebhook", payload);
+
+    console.log("Telegram webhook configured:", url, result);
+  } catch (error) {
+    console.error("Webhook configuration error:", error.message);
+  }
 }
+
+// ===============================
+// CALLBACK HANDLING FOR LISTS
+// ===============================
+
+// Telegram webhook route keessatti callback handling kana dabalataan
+// qabachuun maqaa Nabiyyii/Sahaabaa akka banamu taasisa.
+app.post("/telegram/webhook-details", async (req, res) => {
+  res.sendStatus(200);
+});
+
+// ===============================
+// START SERVER
+// ===============================
 
 async function startServer() {
   try {
-    if (pool) {
-      await initDatabase();
-      console.log("Database migrations completed.");
-    }
+    await initializeDatabase();
   } catch (error) {
     console.error("Database initialization failed:", error.message);
   }
 
-  app.listen(PORT, async () => {
-    console.log(`Waamara running on port ${PORT}`);
+  app.listen(PORT, "0.0.0.0", async () => {
+    console.log(`Waamara server running on port ${PORT}`);
 
-    try {
-      await configureWebhook();
-    } catch (error) {
-      console.error("Webhook setup failed:", error.message);
-    }
+    await configureWebhook();
   });
 }
 
 startServer();
 
-process.on("SIGTERM", async () => {
-  if (pool) await pool.end().catch(() => {});
-  process.exit(0);
-});
+// Yeroo dheeraa keessatti session durii haqi.
+setInterval(() => {
+  const now = Date.now();
+
+  for (const [id, session] of webSessions.entries()) {
+    if (now - session.createdAt > 60 * 60 * 1000) {
+      webSessions.delete(id);
+    }
+  }
+}, 10 * 60 * 1000).unref();
