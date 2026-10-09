@@ -1,15 +1,16 @@
 {
-  "name": "waamara-bot",
-  "version": "3.0.0",
-  "description": "Waamara - Seenaa Nabiyyootaa fi Sahaabota Afaan Oromoo fi Afaan Arabaa",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "dependencies": {
-    "express": "^4.21.2"
-  }
+"name": "waamara",
+"version": "3.0.0",
+"description": "Waamara Islamic Learning Bot",
+"main": "server.js",
+"scripts": {
+"start": "node server.js"
+},
+"engines": {
+"node": ">=20"
+},
+"dependencies": {
+"express": "^4.21.2",
+"pg": "^8.16.3"
+}
 }
